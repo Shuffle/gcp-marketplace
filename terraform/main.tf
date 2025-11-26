@@ -9,6 +9,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.1"
     }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -17,11 +21,25 @@ provider "google" {
   region  = var.region
 }
 
+resource "random_uuid" "shuffle_apikey" {
+}
+
+resource "random_password" "shuffle_default_password" {
+  length  = 16
+  special = true
+  override_special = "!@#$%^&*"
+}
+
 locals {
   deployment_name = var.goog_cm_deployment_name
   network_name    = "${local.deployment_name}-network"
 
-  zones = length(var.zones) > 0 ? var.zones : data.google_compute_zones.available.names
+  # Get all available zones in the region
+  available_zones = data.google_compute_zones.available.names
+  
+  # For single node: use first zone (zone-a)
+  # For multiple nodes: distribute across zones (a, b, c, etc.)
+  zones = local.available_zones
 
   total_nodes   = var.node_count
   manager_nodes = var.node_count  # All nodes are managers
@@ -172,7 +190,11 @@ resource "google_compute_instance" "swarm_manager" {
     swarm-yaml = replace(file("${path.module}/../swarm.yaml"), "\r\n", "\n")
     deploy-sh = replace(file("${path.module}/../deploy.sh"), "\r\n", "\n")
     setup-nfs-server-sh = replace(file("${path.module}/../setup-nfs-server.sh"), "\r\n", "\n")
-    env-file = replace(file("${path.module}/../.env"), "\r\n", "\n")
+    env-file = replace(templatefile("${path.module}/../.env", {
+      SHUFFLE_DEFAULT_USERNAME = var.shuffle_default_username
+      SHUFFLE_DEFAULT_PASSWORD = random_password.shuffle_default_password.result
+      SHUFFLE_DEFAULT_APIKEY   = random_uuid.shuffle_apikey.result
+    }), "\r\n", "\n")
     nginx-main-conf = replace(file("${path.module}/../nginx-main.conf"), "\r\n", "\n")
     monitor-db-permissions-sh = replace(file("${path.module}/scripts/monitor-db-permissions.sh"), "\r\n", "\n")
   }
@@ -205,7 +227,7 @@ resource "google_compute_instance" "swarm_manager" {
 resource "google_compute_instance_group" "managers" {
   count = local.manager_nodes
 
-  name    = "${local.deployment_name}-managers-${count.index + 1}"
+  name    = "${local.deployment_name}-managers-${count.index + 20}"
   zone    = local.zones[count.index % length(local.zones)]
   project = var.project_id
 
@@ -221,3 +243,18 @@ resource "google_compute_instance_group" "managers" {
     port = 3443
   }
 }
+
+resource "null_resource" "wait_for_shuffle_deployment" {
+  depends_on = [google_compute_instance.swarm_manager]
+
+  provisioner "local-exec" {
+    command     = "bash ${path.module}/scripts/wait-for-shuffle.sh http://${google_compute_instance.swarm_manager[0].network_interface[0].access_config[0].nat_ip}:3001 ${google_compute_instance.swarm_manager[0].name} ${google_compute_instance.swarm_manager[0].zone}"
+    interpreter = ["bash", "-c"]
+  }
+
+  # Trigger re-provisioning if primary manager is recreated
+  triggers = {
+    instance_id = google_compute_instance.swarm_manager[0].id
+  }
+}
+

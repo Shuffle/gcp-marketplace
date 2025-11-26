@@ -6,6 +6,7 @@ output "deployment_name" {
 output "shuffle_frontend_url" {
   description = "URL to access Shuffle Frontend"
   value       = "http://${google_compute_instance.swarm_manager[0].network_interface[0].access_config[0].nat_ip}:3001"
+  depends_on  = [null_resource.wait_for_shuffle_deployment]
 }
 
 # HTTPS port 3443 is not exposed externally for security
@@ -65,8 +66,20 @@ output "swarm_join_command_worker" {
   value       = "SSH to primary manager and run: docker swarm join-token worker"
 }
 
+output "admin_username" {
+  description = "Default admin username for Shuffle"
+  value       = var.shuffle_default_username
+}
+
+output "admin_password" {
+  description = "Default admin password for Shuffle (auto-generated)"
+  value       = random_password.shuffle_default_password.result
+  sensitive   = true
+}
+
 output "post_deployment_instructions" {
   description = "Instructions after deployment"
+  depends_on  = [null_resource.wait_for_shuffle_deployment]
   value       = <<-EOT
     =================================================================
     Shuffle Deployment Complete!
