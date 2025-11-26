@@ -9,15 +9,9 @@ variable "goog_cm_deployment_name" {
 }
 
 variable "region" {
-  description = "The Google Cloud region for deployment"
+  description = "The Google Cloud region for deployment (nodes will be distributed across zones within this region)"
   type        = string
-  default     = "australia-southeast1"
-}
-
-variable "zones" {
-  description = "List of zones for instance deployment. If empty, will auto-select from region"
-  type        = list(string)
-  default     = []
+  default     = "us-central1"
 }
 
 variable "node_count" {
@@ -43,8 +37,8 @@ variable "boot_disk_size" {
   default     = 120
 
   validation {
-    condition     = var.boot_disk_size >= 50 && var.boot_disk_size <= 1000
-    error_message = "Boot disk size must be between 50 and 1000 GB"
+    condition     = var.boot_disk_size >= 120 && var.boot_disk_size <= 1000
+    error_message = "Boot disk size must be between 120 and 1000 GB"
   }
 }
 
@@ -113,5 +107,15 @@ variable "enable_cloud_monitoring" {
   description = "Enable Google Cloud Monitoring"
   type        = bool
   default     = true
+}
+
+variable "shuffle_default_username" {
+  description = "Default admin username for Shuffle (email format recommended)"
+  type        = string
+
+  validation {
+    condition     = length(var.shuffle_default_username) >= 4
+    error_message = "Username must be at least 4 characters long"
+  }
 }
 
