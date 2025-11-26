@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   frontend:
@@ -12,7 +12,7 @@ services:
       restart_policy:
         condition: any
         delay: 10s
-        max_attempts: 0  # Unlimited restarts for resilience
+        max_attempts: 0 # Unlimited restarts for resilience
         window: 60s
       placement:
         max_replicas_per_node: 1
@@ -37,7 +37,7 @@ services:
       restart_policy:
         condition: any
         delay: 10s
-        max_attempts: 0  # Unlimited restarts for resilience
+        max_attempts: 0 # Unlimited restarts for resilience
         window: 60s
       placement:
         max_replicas_per_node: 1
@@ -72,7 +72,7 @@ services:
       restart_policy:
         condition: any
         delay: 10s
-        max_attempts: 0  # Unlimited restarts for resilience
+        max_attempts: 0 # Unlimited restarts for resilience
         window: 60s
       placement:
         preferences:
@@ -139,7 +139,7 @@ services:
       restart_policy:
         condition: any
         delay: 15s
-        max_attempts: 0  # Unlimited restarts for resilience
+        max_attempts: 0 # Unlimited restarts for resilience
         window: 60s
       update_config:
         parallelism: 1
@@ -151,10 +151,9 @@ services:
           - spread: node.id
       resources:
         limits:
-          memory: 6G  # Reduced for stability
+          memory: 6G # Reduced for stability
         reservations:
           memory: 4G
-
 
   load-balancer:
     image: nginx:alpine
@@ -170,8 +169,8 @@ services:
       replicas: ${SWARM_NODE_COUNT}
       restart_policy:
         condition: any
-        delay: 10s  # Faster restart
-        max_attempts: 0  # Unlimited restarts for resilience
+        delay: 10s # Faster restart
+        max_attempts: 0 # Unlimited restarts for resilience
         window: 60s
       placement:
         max_replicas_per_node: 1
@@ -184,13 +183,14 @@ services:
       - swarm_executions
     ports:
       - "11211:11211"
+    entrypoint: ["memcached", "-m", "1024", "-c", "2048"]
     env_file: .env
     deploy:
       replicas: ${SWARM_NODE_COUNT}
       restart_policy:
         condition: any
         delay: 10s
-        max_attempts: 0  # Unlimited restarts for resilience
+        max_attempts: 0 # Unlimited restarts for resilience
         window: 60s
       resources:
         limits:
@@ -224,7 +224,6 @@ volumes:
       type: nfs
       o: "addr=${NFS_MASTER_IP},nfsvers=3,proto=tcp,rw,soft,intr,port=2049,mountport=51771,resvport,nolock,timeo=600,retrans=2"
       device: ":/srv/nfs/shuffle-database"
-
 
 networks:
   shuffle:
