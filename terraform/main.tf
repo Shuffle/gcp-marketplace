@@ -21,9 +21,11 @@ provider "google" {
   region  = var.region
 }
 
+# Generate API key for Shuffle default user
 resource "random_uuid" "shuffle_apikey" {
 }
 
+# Generate random password if not provided
 resource "random_password" "shuffle_default_password" {
   length  = 16
   special = true

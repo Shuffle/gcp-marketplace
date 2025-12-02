@@ -183,7 +183,6 @@ services:
       - swarm_executions
     ports:
       - "11211:11211"
-    entrypoint: ["memcached", "-m", "1024", "-c", "2048"]
     env_file: .env
     entrypoint: ["memcached", "-m", "1024", "-c", "2048"]
     deploy:

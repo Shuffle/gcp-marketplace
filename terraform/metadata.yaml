@@ -1,0 +1,186 @@
+apiVersion: blueprints.cloud.google.com/v1alpha1
+kind: BlueprintMetadata
+metadata:
+  name: shuffle-security-orchestration
+  annotations:
+    autogenSpecType: MULTI_VM
+    config.kubernetes.io/local-config: "true"
+spec:
+  info:
+    title: Shuffle Security Orchestration Platform
+    version: 1.0.0
+    actuationTool:
+      flavor: Terraform
+      version: ">= 1.0"
+    description:
+      tagline: Open-source SOAR platform for security automation
+      detailed: |
+        Shuffle is an open-source Security Orchestration, Automation and Response (SOAR) platform 
+        that helps security teams automate repetitive tasks and connect different security tools.
+        
+        This deployment creates a highly available Docker Swarm cluster with automatic NFS configuration,
+        OpenSearch for data storage, and load-balanced frontend/backend services.
+  
+  content:
+    softwareGroups:
+      - type: SOFTWARE_GROUP_OS
+        components:
+          - name: Ubuntu
+            version: "22.04 LTS"
+      - components:
+          - name: Shuffle Frontend
+            version: "latest"
+          - name: Shuffle Backend
+            version: "latest"
+          - name: Shuffle Orborus
+            version: "latest"
+          - name: OpenSearch
+            version: "3.0.0"
+          - name: Docker Swarm
+            version: "latest"
+          - name: Nginx
+            version: "alpine"
+          - name: Memcached
+            version: "latest"
+      
+  interfaces:
+    variables:
+      - name: project_id
+        description: The Google Cloud project ID
+        varType: string
+        required: true
+        
+      - name: goog_cm_deployment_name
+        description: Deployment name from Google Cloud Marketplace
+        varType: string
+        required: true
+        
+      - name: region
+        description: The Google Cloud region for deployment (nodes will be distributed across zones within this region)
+        varType: string
+        defaultValue: us-central1
+        required: true
+        
+      - name: node_count
+        description: Total number of nodes in the Shuffle cluster (min 1, max 10). Single node for testing, 3+ nodes for production HA.
+        varType: integer
+        defaultValue: 1
+        required: true
+        
+      - name: machine_type
+        description: GCP machine type for Shuffle nodes. e2-standard-2 (2 vCPUs, 8GB RAM) recommended for single node, e2-standard-4 for multi-node.
+        varType: string
+        defaultValue: e2-standard-2
+        required: true
+        
+      - name: boot_disk_size
+        description: Boot disk size in GB
+        varType: integer
+        defaultValue: 120
+        
+      - name: boot_disk_type
+        description: Boot disk type
+        varType: string
+        defaultValue: pd-standard
+        
+      - name: source_image
+        description: Source image for VMs. If empty, uses Ubuntu 22.04 LTS
+        varType: string
+        defaultValue: ""
+        
+      - name: subnet_cidr
+        description: CIDR range for the Shuffle subnet
+        varType: string
+        defaultValue: 10.224.0.0/16
+        
+      - name: external_access_cidrs
+        description: Comma-separated CIDR ranges allowed to access Shuffle UI (port 3001)
+        varType: string
+        defaultValue: 0.0.0.0/0
+        
+      - name: enable_ssh
+        description: Enable SSH access to nodes
+        varType: bool
+        defaultValue: true
+        
+      - name: ssh_source_ranges
+        description: Comma-separated CIDR ranges allowed for SSH access
+        varType: string
+        defaultValue: 0.0.0.0/0
+        
+      - name: environment
+        description: Environment label (dev, staging, production)
+        varType: string
+        defaultValue: production
+        
+      - name: enable_cloud_logging
+        description: Enable Google Cloud Logging
+        varType: bool
+        defaultValue: true
+        
+      - name: enable_cloud_monitoring
+        description: Enable Google Cloud Monitoring
+        varType: bool
+        defaultValue: true
+        
+      - name: shuffle_default_username
+        description: Default admin username for Shuffle (email format recommended)
+        varType: string
+        required: true
+        
+    outputs:
+      - name: deployment_name
+        description: Name of the deployment
+        
+      - name: shuffle_frontend_url
+        description: URL to access Shuffle Frontend
+        
+      - name: opensearch_internal_url
+        description: Internal URL to access OpenSearch (not exposed externally)
+        
+      - name: manager_instances
+        description: List of manager instance details (name, IPs, zone)
+        
+      - name: total_nodes
+        description: Total number of nodes in the cluster
+        
+      - name: manager_nodes
+        description: Number of manager nodes
+        
+      - name: network_name
+        description: Name of the VPC network
+        
+      - name: subnet_name
+        description: Name of the subnet
+        
+      - name: nfs_server_ip
+        description: IP address of the NFS server (primary manager)
+        
+      - name: swarm_join_command_manager
+        description: Command to join swarm as manager (retrieve from primary manager)
+        
+      - name: swarm_join_command_worker
+        description: Command to join swarm as worker (retrieve from primary manager)
+        
+      - name: admin_username
+        description: Default admin username for Shuffle
+        
+      - name: admin_password
+        description: Default admin password for Shuffle (auto-generated, sensitive)
+        
+      - name: post_deployment_instructions
+        description: Instructions after deployment
+        
+  requirements:
+    services:
+      - compute.googleapis.com
+      - logging.googleapis.com
+      - monitoring.googleapis.com
+      
+    roles:
+      - level: Project
+        roles:
+          - roles/compute.instanceAdmin.v1
+          - roles/compute.networkAdmin
+          - roles/compute.securityAdmin
+          - roles/iam.serviceAccountUser
