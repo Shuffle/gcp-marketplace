@@ -296,15 +296,14 @@ docker service update --image ghcr.io/shuffle/shuffle-orborus:latest shuffle_orb
 
 ## License
 
-This deployment is for [Shuffle](https://github.com/Shuffle/Shuffle), which is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
-
-See the [Shuffle License](https://github.com/Shuffle/Shuffle/blob/main/LICENSE) for details.
+<!-- Add EULA here -->
 
 ## Support
 
 - **Shuffle Documentation**: https://shuffler.io/docs
 - **GitHub Issues**: https://github.com/Shuffle/Shuffle/issues
 - **Community Discord**: https://discord.gg/B2CBzUm
+- **Support Email**: support@shuffler.io
 
 ## Requirements
 
