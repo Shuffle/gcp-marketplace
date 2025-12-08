@@ -77,10 +77,23 @@ cat > /etc/exports <<EOF
 /srv/nfs/nginx-config      ${NETWORK}(ro,sync,all_squash,anonuid=${APP_UID},anongid=${APP_GID},no_subtree_check,insecure)
 EOF
 
-echo "🚀 Enabling and restarting NFS services..."
-systemctl enable rpcbind nfs-kernel-server
+echo "🚀 Enabling and starting NFS services..."
+
+# Ensure rpc_pipefs is mounted (required for Ubuntu 24.04)
+if ! mountpoint -q /var/lib/nfs/rpc_pipefs 2>/dev/null; then
+  mkdir -p /var/lib/nfs/rpc_pipefs
+  mount -t rpc_pipefs rpc_pipefs /var/lib/nfs/rpc_pipefs || true
+fi
+
+systemctl enable rpcbind
 systemctl restart rpcbind
-systemctl restart nfs-kernel-server
+sleep 2
+
+# Ubuntu 24.04 uses nfs-server (not nfs-kernel-server)
+systemctl enable nfs-server
+systemctl restart nfs-server
+
+sleep 3
 
 echo "📤 Exporting NFS shares..."
 exportfs -ra
@@ -106,6 +119,35 @@ echo
 
 echo "🧱 Firewall: allow TCP 2049, 111, 51771, 48095, 48096, 32769 from your Swarm nodes to ${SERVER_IP}"
 echo "   (cloud + host firewall, if applicable)"
+
+echo ""
+echo "🧪 Testing NFS server accessibility..."
+
+# Wait for NFS to fully initialize
+sleep 3
+
+# Test showmount locally
+if showmount -e localhost >/dev/null 2>&1; then
+  echo "✅ NFS exports are accessible via showmount"
+  showmount -e localhost
+else
+  echo "❌ ERROR: showmount failed - NFS server is not accessible"
+  echo "Checking NFS service status:"
+  systemctl status nfs-server || systemctl status nfs-kernel-server || true
+  exit 1
+fi
+
+# Test actual NFS mount
+TEST_MOUNT="/tmp/nfs-test-mount-$$"
+mkdir -p "${TEST_MOUNT}"
+if mount -t nfs -o vers=3,proto=tcp,port=2049,mountport=51771,nolock ${SERVER_IP}:/srv/nfs/shuffle-apps "${TEST_MOUNT}" 2>/dev/null; then
+  echo "✅ NFS mount test successful"
+  umount "${TEST_MOUNT}" || true
+  rmdir "${TEST_MOUNT}" || true
+else
+  echo "⚠️  WARNING: NFS mount test failed (this might be OK if firewall rules aren't in place yet)"
+  rmdir "${TEST_MOUNT}" || true
+fi
 
 echo
 echo "🔧 Applying OpenSearch optimizations..."

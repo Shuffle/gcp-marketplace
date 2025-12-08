@@ -1,253 +1,323 @@
-# Shuffle Deployment Guide
+# Shuffle Security Orchestration Platform
 
-This guide covers deploying Shuffle using Terraform on Google Cloud Platform (GCP).
+This module deploys [Shuffle](https://shuffler.io), an open-source Security Orchestration, Automation and Response (SOAR) platform, on Google Cloud Platform using Terraform.
+
+Shuffle helps security teams automate repetitive tasks and connect different security tools through a visual workflow editor. This deployment creates a highly available Docker Swarm cluster with automatic NFS configuration, OpenSearch for data storage, and load-balanced frontend/backend services.
+
+## Architecture
+
+- **Multi-node Docker Swarm cluster** (1-10 nodes, all as managers)
+- **Automatic NFS server** configuration for shared storage
+- **OpenSearch 3.0.0** for data persistence and search
+- **Load-balanced services** with Nginx
+- **Auto-scaling** based on node count
+- **Distributed deployment** across zones within a region
 
 ## Prerequisites
 
 - Google Cloud Project with billing enabled
-- Terraform >= 1.0 installed
-- `gcloud` CLI installed and authenticated
-- Appropriate IAM permissions (Compute Admin, Network Admin)
+- Required APIs enabled:
+  - Compute Engine API
+  - Cloud Logging API (optional)
+  - Cloud Monitoring API (optional)
+- Sufficient IAM permissions:
+  - `roles/compute.instanceAdmin.v1`
+  - `roles/compute.networkAdmin`
+  - `roles/compute.securityAdmin`
+  - `roles/iam.serviceAccountUser`
 
-## Terraform Deployment
+## Usage
 
-### Quick Start
+### Basic Deployment (Single Node)
 
-1. **Clone the Repository:**
-   ```bash
-   git clone https://github.com/Shuffle/Shuffle.git
-   cd Shuffle/terraform
-   ```
-
-2. **Initialize Terraform:**
-   ```bash
-   terraform init
-   ```
-
-3. **Configure Variables:**
-   Create a `terraform.tfvars` file:
-   ```hcl
-   project_id              = "your-gcp-project-id"
-   goog_cm_deployment_name = "shuffle-deployment"
-   region                  = "us-central1"
-   node_count              = 3  # 1-10 nodes supported
-   machine_type            = "e2-standard-4"
-   ```
-
-4. **Deploy Infrastructure:**
-   ```bash
-   # Review the deployment plan
-   terraform plan
-
-   # Apply the configuration
-   terraform apply
-   ```
-
-5. **Access Shuffle:**
-   After deployment completes (~10-15 minutes):
-   ```bash
-   # Get the frontend URL
-   terraform output frontend_url
-   ```
-
-### Configuration Options
-
-#### Required Variables
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `project_id` | Your GCP project ID | `"my-project-123"` |
-| `goog_cm_deployment_name` | Unique deployment name | `"shuffle-prod"` |
-
-#### Optional Variables
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `region` | GCP region for deployment | `"australia-southeast1"` |
-| `node_count` | Number of nodes (1-10) | `1` |
-| `machine_type` | GCP machine type | `"e2-standard-2"` |
-| `boot_disk_size` | Boot disk size in GB | `120` |
-| `boot_disk_type` | Disk type (pd-standard/pd-ssd/pd-balanced) | `"pd-standard"` |
-| `subnet_cidr` | Internal network CIDR | `"10.224.0.0/16"` |
-| `external_access_cidrs` | Allowed IPs for frontend access | `"0.0.0.0/0"` |
-| `enable_ssh` | Enable SSH access | `true` |
-| `ssh_source_ranges` | Allowed IPs for SSH | `"0.0.0.0/0"` |
-| `environment` | Environment label | `"production"` |
-
-### Deployment Examples
-
-#### Single Node (Development)
 ```hcl
-# terraform.tfvars
-project_id              = "your-project"
-goog_cm_deployment_name = "shuffle-dev"
-node_count              = 1
-machine_type            = "e2-standard-2"
-environment             = "dev"
+module "shuffle" {
+  source = "./terraform"
+
+  project_id              = "your-project-id"
+  goog_cm_deployment_name = "shuffle-deployment"
+  region                  = "us-central1"
+  node_count              = 1
+  machine_type            = "e2-standard-2"
+  shuffle_default_username = "admin@example.com"
+}
 ```
 
-#### Multi-Node High Availability (Production)
+### High Availability Deployment (Multi-Node)
+
 ```hcl
-# terraform.tfvars
-project_id              = "your-project"
-goog_cm_deployment_name = "shuffle-prod"
-node_count              = 3
-machine_type            = "e2-standard-4"
-boot_disk_type          = "pd-ssd"
-external_access_cidrs   = "203.0.113.0/24"  # Restrict access
-environment             = "production"
+module "shuffle" {
+  source = "./terraform"
+
+  project_id              = "your-project-id"
+  goog_cm_deployment_name = "shuffle-ha-deployment"
+  region                  = "us-central1"
+  node_count              = 3
+  machine_type            = "e2-standard-4"
+  boot_disk_size          = 250
+  boot_disk_type          = "pd-ssd"
+  shuffle_default_username = "admin@example.com"
+  environment             = "production"
+  enable_cloud_logging    = true
+  enable_cloud_monitoring = true
+}
 ```
 
-### What Gets Deployed
+### Production Deployment with Custom Network
 
-The Terraform configuration automatically provisions:
+```hcl
+module "shuffle" {
+  source = "./terraform"
 
-#### Infrastructure
-- **VPC Network**: Isolated network for Shuffle
-- **Subnet**: Private subnet with configurable CIDR
-- **Firewall Rules**: 
-  - Internal: Docker Swarm, NFS, OpenSearch, Backend services
-  - External: Port 3001 (Frontend) only
-- **Compute Instances**: Configured number of nodes with Docker Swarm
-
-#### Shuffle Services (Auto-deployed via startup script)
-- **Frontend**: Web UI (port 3001)
-- **Backend**: API server
-- **Orborus**: Workflow orchestrator
-- **Workers**: App execution workers
-- **OpenSearch**: Data storage and search
-- **Memcached**: Caching layer
-- **NFS**: Shared storage across nodes
-
-## Managing the Deployment
-
-### Viewing Resources
-```bash
-# List all deployed resources
-terraform state list
-
-# Show specific resource details
-terraform state show google_compute_instance.swarm_manager[0]
-
-# Get outputs
-terraform output
+  project_id              = "your-project-id"
+  goog_cm_deployment_name = "shuffle-prod"
+  region                  = "us-east1"
+  node_count              = 5
+  machine_type            = "e2-standard-4"
+  boot_disk_size          = 500
+  boot_disk_type          = "pd-balanced"
+  
+  # Network configuration
+  subnet_cidr            = "10.100.0.0/16"
+  external_access_cidrs  = "203.0.113.0/24,198.51.100.0/24"
+  ssh_source_ranges      = "203.0.113.0/24"
+  
+  # Admin configuration
+  shuffle_default_username = "security-admin@company.com"
+  
+  # Monitoring
+  environment             = "production"
+  enable_cloud_logging    = true
+  enable_cloud_monitoring = true
+}
 ```
 
-### Scaling
-To change the number of nodes:
-```bash
-# Update terraform.tfvars
-node_count = 5  # New desired count
+## Accessing Shuffle
 
-# Apply changes
-terraform apply
+After deployment completes (approximately 10-15 minutes), access Shuffle:
+
+1. **Get the Frontend URL** from outputs:
+   ```bash
+   terraform output shuffle_frontend_url
+   ```
+
+2. **Retrieve the admin password**:
+   ```bash
+   terraform output admin_password
+   ```
+
+3. **Access the web interface** at the displayed URL (port 3001)
+
+4. **Login** with:
+   - Username: Your configured email address
+   - Password: From the output above
+
+## Post-Deployment
+
+### SSH into Primary Manager
+
+```bash
+gcloud compute ssh shuffle-vm-manager-1 --zone=<zone>
 ```
 
-### SSH Access
-```bash
-# Get instance names
-gcloud compute instances list --filter="labels.deployment=shuffle-deployment"
+### Check Docker Swarm Status
 
-# SSH to a node
-gcloud compute ssh shuffle-deployment-manager-1 --zone=us-central1-a
-```
-
-### Monitoring Services
-Once connected to a node:
 ```bash
-# Check Docker Swarm status
 docker node ls
+docker stack services shuffle
+```
 
-# View running services
-docker service ls
+### View Service Logs
 
-# Check service logs
+```bash
 docker service logs shuffle_frontend
+docker service logs shuffle_backend
+docker service logs shuffle_orborus
 ```
 
-## Deletion/Cleanup
-
-### Complete Cleanup
-To remove all Shuffle infrastructure:
+### Monitor OpenSearch
 
 ```bash
-# Destroy all resources
-terraform destroy
-
-# Confirm by typing 'yes' when prompted
+curl http://localhost:9200/_cluster/health?pretty
 ```
 
-This will delete:
-- All compute instances
-- Network and firewall rules
-- Instance groups
-- All associated resources
+## Security Considerations
 
-### Partial Cleanup
-To remove specific resources:
-```bash
-# Target specific resources for destruction
-terraform destroy -target=google_compute_instance.swarm_manager
+- **External Access**: Only port 3001 (Shuffle Frontend) is exposed externally
+- **HTTPS**: Port 3443 is configured internally but not exposed for security
+- **OpenSearch**: Accessible only within the VPC (port 9200)
+- **NFS**: Internal network communication only
+- **SSH Access**: Configurable via `ssh_source_ranges`
+- **Firewall**: Restricted by `external_access_cidrs`
 
-# Or remove from state and manage manually
-terraform state rm google_compute_instance.swarm_manager
-```
+## Inputs
 
-### Post-Deletion Cleanup
-After Terraform deletion, verify cleanup:
-```bash
-# Check for remaining resources
-gcloud compute instances list --filter="labels.deployment=shuffle-deployment"
-gcloud compute firewall-rules list --filter="name:shuffle-*"
-gcloud compute networks list --filter="name:shuffle-*"
+| Name | Description | Type | Default | Required |
+|------|-------------|------|---------|:--------:|
+| project\_id | The Google Cloud project ID | `string` | n/a | yes |
+| goog\_cm\_deployment\_name | Deployment name from Google Cloud Marketplace | `string` | n/a | yes |
+| shuffle\_default\_username | Default admin username for Shuffle (email format recommended) | `string` | n/a | yes |
+| region | The Google Cloud region for deployment (nodes will be distributed across zones within this region) | `string` | `"us-central1"` | no |
+| node\_count | Total number of nodes in the Shuffle cluster (min 1, max 10). Single node for testing, 3+ nodes for production HA. | `number` | `1` | no |
+| machine\_type | GCP machine type for Shuffle nodes. e2-standard-2 (2 vCPUs, 8GB RAM) recommended for single node, e2-standard-4 for multi-node. | `string` | `"e2-standard-2"` | no |
+| boot\_disk\_size | Boot disk size in GB | `number` | `120` | no |
+| boot\_disk\_type | Boot disk type | `string` | `"pd-standard"` | no |
+| source\_image | Source image for VMs. If empty, uses Ubuntu 22.04 LTS | `string` | `""` | no |
+| subnet\_cidr | CIDR range for the Shuffle subnet | `string` | `"10.224.0.0/16"` | no |
+| external\_access\_cidrs | Comma-separated CIDR ranges allowed to access Shuffle UI (port 3001) | `string` | `"0.0.0.0/0"` | no |
+| enable\_ssh | Enable SSH access to nodes | `bool` | `true` | no |
+| ssh\_source\_ranges | Comma-separated CIDR ranges allowed for SSH access | `string` | `"0.0.0.0/0"` | no |
+| environment | Environment label (dev, staging, production) | `string` | `"production"` | no |
+| enable\_cloud\_logging | Enable Google Cloud Logging | `bool` | `true` | no |
+| enable\_cloud\_monitoring | Enable Google Cloud Monitoring | `bool` | `true` | no |
 
-# Manually delete any remaining resources if needed
-gcloud compute instances delete INSTANCE_NAME --zone=ZONE
-```
+## Outputs
+
+| Name | Description |
+|------|-------------|
+| deployment\_name | Name of the deployment |
+| shuffle\_frontend\_url | URL to access Shuffle Frontend (HTTP on port 3001) |
+| opensearch\_internal\_url | Internal URL to access OpenSearch (not exposed externally) |
+| manager\_instances | List of manager instance details (name, IPs, zone) |
+| total\_nodes | Total number of nodes in the cluster |
+| manager\_nodes | Number of manager nodes (same as total\_nodes) |
+| network\_name | Name of the VPC network |
+| subnet\_name | Name of the subnet |
+| nfs\_server\_ip | IP address of the NFS server (primary manager) |
+| swarm\_join\_command\_manager | Command to join swarm as manager (retrieve from primary manager) |
+| swarm\_join\_command\_worker | Command to join swarm as worker (retrieve from primary manager) |
+| admin\_username | Default admin username for Shuffle |
+| admin\_password | Default admin password for Shuffle (auto-generated, sensitive) |
+| post\_deployment\_instructions | Instructions after deployment |
 
 ## Troubleshooting
 
 ### Deployment Issues
-If deployment fails:
+
+If services don't start automatically:
+
 ```bash
-# Check Terraform state
-terraform state list
+# SSH to primary manager
+gcloud compute ssh shuffle-vm-manager-1 --zone=<zone>
 
-# Review detailed logs
-terraform apply -debug
+# Check startup logs
+cat /var/log/shuffle-startup.log
 
-# Check instance startup logs
-gcloud compute instances get-serial-port-output shuffle-deployment-manager-1
+# Manually trigger deployment
+cd /opt/shuffle
+sudo ./deploy.sh
 ```
 
-### Service Issues
-```bash
-# SSH to manager node
-gcloud compute ssh shuffle-deployment-manager-1
+### Service Health Check
 
-# Check Docker Swarm
-docker node ls
+```bash
+# Check all running services
 docker service ls
-docker service ps shuffle_frontend
 
-# View logs
-docker service logs shuffle_frontend --follow
+# Check specific service health
+docker service ps shuffle_frontend --no-trunc
+
+# View recent logs
+docker service logs --tail 100 shuffle_backend
 ```
 
-### Network Issues
-Ensure firewall rules are correctly applied:
+### Network Connectivity
+
 ```bash
-gcloud compute firewall-rules list --filter="network:shuffle-*"
+# Test OpenSearch
+curl http://localhost:9200/_cluster/health
+
+# Test Frontend
+curl http://localhost:3001/api/v1/health
+
+# Check NFS mounts
+showmount -e localhost
 ```
 
-## Important Notes
+## Scaling
 
-- **Data Persistence**: Data is stored on NFS shared between nodes. Back up important data before deletion.
-- **Costs**: Running instances incur charges. Use `terraform destroy` when not needed.
-- **Security**: Default configuration exposes port 3001. Restrict `external_access_cidrs` in production.
-- **Scaling Limits**: Maximum 10 nodes supported by default configuration.
+To scale the cluster:
+
+1. Update `node_count` in your Terraform configuration
+2. Run `terraform apply`
+3. New nodes will automatically join the swarm
+
+**Note**: Scaling down requires manual node removal:
+
+```bash
+docker node rm <node-name>
+```
+
+## Backup and Disaster Recovery
+
+### Backup Strategy
+
+- **Database**: OpenSearch data stored on NFS (`/srv/nfs/shuffle-database`)
+- **Applications**: App data on NFS (`/srv/nfs/shuffle-apps`)
+- **Files**: User files on NFS (`/srv/nfs/shuffle-files`)
+
+### Recommended Backup
+
+```bash
+# Create snapshot of boot disks
+gcloud compute disks snapshot <disk-name> --zone=<zone>
+
+# Backup NFS data
+tar -czf shuffle-backup-$(date +%F).tar.gz /srv/nfs/
+```
+
+## Upgrading
+
+To upgrade Shuffle:
+
+```bash
+# SSH to primary manager
+gcloud compute ssh shuffle-vm-manager-1 --zone=<zone>
+
+# Pull latest images
+docker service update --image ghcr.io/shuffle/shuffle-frontend:latest shuffle_frontend
+docker service update --image ghcr.io/shuffle/shuffle-backend:latest shuffle_backend
+docker service update --image ghcr.io/shuffle/shuffle-orborus:latest shuffle_orborus
+```
+
+## Resource Requirements
+
+### Minimum Requirements (Single Node)
+- **CPU**: 2 vCPUs
+- **RAM**: 8 GB
+- **Disk**: 120 GB
+- **Machine Type**: e2-standard-2
+
+### Recommended Production (3+ Nodes)
+- **CPU**: 4 vCPUs per node
+- **RAM**: 16 GB per node
+- **Disk**: 250+ GB per node
+- **Machine Type**: e2-standard-4 or higher
+
+## License
+
+<!-- Add EULA here -->
 
 ## Support
 
-For issues or questions:
-- Check logs: `gcloud compute instances get-serial-port-output INSTANCE_NAME`
-- Review Terraform state: `terraform state show`
-- Consult Shuffle documentation: https://shuffler.io/docs
+- **Shuffle Documentation**: https://shuffler.io/docs
+- **GitHub Issues**: https://github.com/Shuffle/Shuffle/issues
+- **Community Discord**: https://discord.gg/B2CBzUm
+- **Support Email**: support@shuffler.io
+
+## Requirements
+
+| Name | Version |
+|------|---------|
+| terraform | >= 1.0 |
+| google | ~> 5.0 |
+| random | ~> 3.1 |
+| null | ~> 3.0 |
+
+## Providers
+
+| Name | Version |
+|------|---------|
+| google | ~> 5.0 |
+| random | ~> 3.1 |
+| null | ~> 3.0 |

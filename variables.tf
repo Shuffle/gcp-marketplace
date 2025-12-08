@@ -8,10 +8,9 @@ variable "goog_cm_deployment_name" {
   type        = string
 }
 
-variable "region" {
-  description = "The Google Cloud region for deployment (nodes will be distributed across zones within this region)"
+variable "zone" {
+  description = "The zone where Shuffle cluster will be deployed"
   type        = string
-  default     = "us-central1"
 }
 
 variable "node_count" {
@@ -56,7 +55,7 @@ variable "boot_disk_type" {
 variable "source_image" {
   description = "Source image for VMs. If empty, uses Ubuntu 22.04 LTS"
   type        = string
-  default     = ""
+  default     = "projects/shuffle-public/global/images/shuffle-ubuntu2404-x86-64-20251208"
 }
 
 variable "subnet_cidr" {
@@ -107,15 +106,5 @@ variable "enable_cloud_monitoring" {
   description = "Enable Google Cloud Monitoring"
   type        = bool
   default     = true
-}
-
-variable "shuffle_default_username" {
-  description = "Default admin username for Shuffle (email format recommended)"
-  type        = string
-
-  validation {
-    condition     = length(var.shuffle_default_username) >= 4
-    error_message = "Username must be at least 4 characters long"
-  }
 }
 
