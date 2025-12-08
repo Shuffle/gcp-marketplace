@@ -19,23 +19,6 @@ spec:
         
         This deployment creates a highly available Docker Swarm cluster with automatic NFS configuration,
         OpenSearch for data storage, and load-balanced frontend/backend services.
-      architecture: |
-        - Distributed Docker Swarm cluster (1-10 nodes)
-        - Automatic NFS configuration for shared storage
-        - OpenSearch for data persistence and search
-        - Load balanced frontend and backend services
-        - Auto-scaling based on node count
-    icon: https://shuffler.io/images/logo.png
-    
-  content:
-    documentation:
-    - title: Shuffle Documentation
-      url: https://shuffler.io/docs
-    - title: Getting Started Guide
-      url: https://shuffler.io/docs/getting_started
-    - title: GitHub Repository
-      url: https://github.com/Shuffle/Shuffle
-      
   ui:
     input:
       variables:
@@ -43,28 +26,29 @@ spec:
           name: project_id
           title: Project ID
           invisible: true
-          
+
         goog_cm_deployment_name:
           name: goog_cm_deployment_name
           title: Deployment name
           invisible: true
+
         source_image:
           name: source_image
           title: Source Image
           enumValueLabels:
-            - label: shuffle
-            - value: projects/shuffle-public/global/licenses/cloud-marketplace-1a03f928f646604f-df1ebeb69c0ba664
+            - label: "shuffle"
+              value: "projects/shuffle-public/global/images/shuffle-license-image-20251205"
           xGoogleProperty:
-            type: ET_GCE_IMAGE
+            type: ET_GCE_DISK_IMAGE
             zoneProperty: zone
-          
+
         zone:
           name: zone
           title: Zone
           tooltip: The zone where Shuffle cluster will be deployed
           xGoogleProperty:
             type: ET_GCE_ZONE
-            
+
         node_count:
           name: node_count
           title: Number of cluster nodes
@@ -72,7 +56,7 @@ spec:
           min: 1
           max: 10
           section: cluster_configuration
-          
+
         machine_type:
           name: machine_type
           title: Machine type
@@ -81,7 +65,7 @@ spec:
           xGoogleProperty:
             type: ET_GCE_MACHINE_TYPE
             zoneProperty: zone
-            
+
         boot_disk_type:
           name: boot_disk_type
           title: Boot disk type
@@ -90,7 +74,7 @@ spec:
           xGoogleProperty:
             type: ET_GCE_DISK_TYPE
             zoneProperty: zone
-            
+
         boot_disk_size:
           name: boot_disk_size
           title: Boot disk size in GB
@@ -102,116 +86,99 @@ spec:
             type: ET_GCE_DISK_SIZE
             gceDiskSize:
               diskTypeVariable: boot_disk_type
-              
+
         external_access_cidrs:
           name: external_access_cidrs
           title: Source IP ranges for Shuffle UI access
           tooltip: 'Comma-separated CIDR ranges allowed to access Shuffle UI (port 3001). Use CIDR notation. <a href="https://cloud.google.com/compute/docs/networking#firewalls">Learn more</a>'
           placeholder: '0.0.0.0/0'
           section: networking
-          
+
         enable_ssh:
           name: enable_ssh
           title: Enable SSH access
           tooltip: Allow SSH access to cluster nodes
           section: networking
-          
+
         ssh_source_ranges:
           name: ssh_source_ranges
           title: Source IP ranges for SSH access
           tooltip: 'Comma-separated CIDR ranges allowed for SSH access. Use CIDR notation. <a href="https://cloud.google.com/compute/docs/networking#firewalls">Learn more</a>'
           placeholder: '0.0.0.0/0'
           section: networking
-          
-        shuffle_default_username:
-          name: shuffle_default_username
-          title: Administrator email address
-          tooltip: The email address for the default Shuffle administrator account
-          placeholder: admin@example.com
-          section: admin_account
-          regexValidation: '^[a-zA-Z0-9!#$%&''*+\/=?^_`{|}~\.-]+@[a-zA-Z0-9](?:[a-zA-Z0-9]?[.-]?[a-zA-Z0-9]+)+[[a-zA-Z0-9]{1}$'
-          validation: Please enter a valid email address
-          xGoogleProperty:
-            type: ET_EMAIL_ADDRESS
-            
+
         enable_cloud_logging:
           name: enable_cloud_logging
           title: Enable Cloud Logging
           tooltip: 'Cloud Logging allows you to store, search, analyze, monitor, and alert on log data and events. <a href="https://cloud.google.com/logging/">Learn more</a>'
           section: google_cloud_operations
-          
+
         enable_cloud_monitoring:
           name: enable_cloud_monitoring
           title: Enable Cloud Monitoring
           tooltip: 'Cloud Monitoring provides visibility into the performance, uptime, and overall health of cloud-powered applications. <a href="https://cloud.google.com/monitoring/">Learn more</a>'
           section: google_cloud_operations
-          
+
+        environment:
+          name: environment
+          title: Environment
+          tooltip: Environment label for resource organization
+          section: google_cloud_operations
+          level: 1
+          enumValueLabels:
+            - label: Production
+              value: production
+            - label: Staging
+              value: staging
+            - label: Development
+              value: dev
+
       sections:
         - name: cluster_configuration
           title: Cluster Configuration
           tooltip: Configure the size and capacity of your Shuffle cluster
-          
+
         - name: boot_disk
           title: Boot Disk
           tooltip: Each instance requires a disk to boot from
-          
+
         - name: networking
           title: Networking
           tooltip: Configure network access and firewall rules
-          
-        - name: admin_account
-          title: Administrator Account
-          tooltip: Configure the default administrator account
-          
+
         - name: google_cloud_operations
           title: Google Cloud Operations
           tooltip: Monitoring and management for services, containers, applications, and infrastructure
-          
+
     runtime:
       outputMessage: |
         Deployment of Shuffle Security Orchestration Platform is complete!
-        
+
         Please wait a few minutes for all services to fully initialize.
-        
+
       suggestedActions:
         - heading: Access Shuffle Web Interface
           description: 'Open the Shuffle frontend at: <a href="http://${shuffle_frontend_url}">http://${shuffle_frontend_url}</a>'
-          
-        - heading: Log in with administrator credentials
-          description: |
-            Use the following credentials to log in:
-            - Email: ${shuffle_default_username}
-            - Password: View using command: <code>gcloud compute ssh ${manager_instances[0].name} --zone=${manager_instances[0].zone} --command="sudo cat /root/.shuffle_default_password"</code>
-            
+
         - heading: SSH into primary manager node
           description: 'SSH to the primary manager node: <code>gcloud compute ssh ${manager_instances[0].name} --zone=${manager_instances[0].zone}</code>'
-          
+
         - heading: View Docker services
           description: 'Check the status of Shuffle services: <code>sudo docker stack services shuffle</code>'
-          
+
         - heading: View service logs
           description: 'View logs for a specific service: <code>sudo docker service logs shuffle_&lt;service-name&gt;</code>'
-          
-      primaryButton:
-        label: Access Shuffle
-        type: TYPE_URL
-        action: http://${shuffle_frontend_url}
-        
-      secondaryButton:
-        label: SSH to Primary Manager
-        type: TYPE_GCE_VM_SSH
-        action: ${manager_instances[0].name}
-        
+
   requirements:
     services:
-    - compute.googleapis.com
-    - logging.googleapis.com
-    - monitoring.googleapis.com
-    
+      - compute.googleapis.com
+      - logging.googleapis.com
+      - monitoring.googleapis.com
+
     roles:
-    - level: Project
-      roles:
-      - roles/compute.instanceAdmin.v1
-      - roles/compute.networkAdmin
-      - roles/compute.securityAdmin
-      - roles/iam.serviceAccountUser
+      - level: Project
+        roles:
+          - roles/compute.instanceAdmin.v1
+          - roles/compute.networkAdmin
+          - roles/compute.securityAdmin
+          - roles/iam.serviceAccountUser

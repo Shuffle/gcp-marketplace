@@ -33,7 +33,7 @@ apt-get install -y \
     nfs-common \
     nfs-kernel-server \
     jq \
-    netcat
+    netcat-openbsd
 
 # Install Docker if not present
 if ! command -v docker &> /dev/null; then

@@ -18,23 +18,15 @@ terraform {
 
 provider "google" {
   project = var.project_id
-  region  = var.region
-}
-
-# Generate API key for Shuffle default user
-resource "random_uuid" "shuffle_apikey" {
-}
-
-# Generate random password if not provided
-resource "random_password" "shuffle_default_password" {
-  length  = 16
-  special = true
-  override_special = "!@#$%^&*"
+  region  = local.region
 }
 
 locals {
   deployment_name = var.goog_cm_deployment_name
   network_name    = "${local.deployment_name}-network"
+  
+  # Extract region from zone (e.g., us-central1-a -> us-central1)
+  region = join("-", slice(split("-", var.zone), 0, 2))
 
   # Get all available zones in the region
   available_zones = data.google_compute_zones.available.names
@@ -56,7 +48,7 @@ locals {
 
 data "google_compute_zones" "available" {
   project = var.project_id
-  region  = var.region
+  region  = local.region
   status  = "UP"
 }
 
@@ -71,7 +63,7 @@ resource "google_compute_subnetwork" "shuffle_subnet" {
   name          = "${local.deployment_name}-subnet"
   network       = google_compute_network.shuffle_network.id
   ip_cidr_range = var.subnet_cidr
-  region        = var.region
+  region        = local.region
   project       = var.project_id
 }
 
@@ -94,7 +86,12 @@ resource "google_compute_firewall" "swarm_internal" {
   # NFS for shared storage (internal only)
   allow {
     protocol = "tcp"
-    ports    = ["2049", "111", "51771"]
+    ports    = ["2049", "111", "51771", "48095", "48096", "32769"]
+  }
+
+  allow {
+    protocol = "udp"
+    ports    = ["111", "2049", "51771", "48095", "48096", "32769"]
   }
 
   # Internal services (OpenSearch, Backend, Workers)
@@ -189,15 +186,11 @@ resource "google_compute_instance" "swarm_manager" {
     opensearch-initial-masters = local.opensearch_initial_masters
 
     startup-script = replace(file("${path.module}/scripts/startup-simple.sh"), "\r\n", "\n")
-    swarm-yaml = replace(file("${path.module}/../swarm.yaml"), "\r\n", "\n")
-    deploy-sh = replace(file("${path.module}/../deploy.sh"), "\r\n", "\n")
-    setup-nfs-server-sh = replace(file("${path.module}/../setup-nfs-server.sh"), "\r\n", "\n")
-    env-file = replace(templatefile("${path.module}/../.env", {
-      SHUFFLE_DEFAULT_USERNAME = var.shuffle_default_username
-      SHUFFLE_DEFAULT_PASSWORD = random_password.shuffle_default_password.result
-      SHUFFLE_DEFAULT_APIKEY   = random_uuid.shuffle_apikey.result
-    }), "\r\n", "\n")
-    nginx-main-conf = replace(file("${path.module}/../nginx-main.conf"), "\r\n", "\n")
+    swarm-yaml = replace(file("${path.module}/config/swarm.yaml"), "\r\n", "\n")
+    deploy-sh = replace(file("${path.module}/config/deploy.sh"), "\r\n", "\n")
+    setup-nfs-server-sh = replace(file("${path.module}/config/setup-nfs-server.sh"), "\r\n", "\n")
+    env-file = replace(file("${path.module}/config/.env"), "\r\n", "\n")
+    nginx-main-conf = replace(file("${path.module}/config/nginx-main.conf"), "\r\n", "\n")
     monitor-db-permissions-sh = replace(file("${path.module}/scripts/monitor-db-permissions.sh"), "\r\n", "\n")
   }
 
@@ -213,9 +206,10 @@ resource "google_compute_instance" "swarm_manager" {
   tags = ["${local.deployment_name}-node", "${local.deployment_name}-manager"]
 
   labels = {
-    deployment  = local.deployment_name
-    node-role   = "manager"
-    environment = var.environment
+    deployment            = local.deployment_name
+    node-role             = "manager"
+    environment           = var.environment
+    goog-partner-solution = "isol_plb32_001kf00000wicu3iai_qjbz3ffz4x7gg22x7o7abq4qgmbnyrq7"
   }
 
   depends_on = [
@@ -243,20 +237,6 @@ resource "google_compute_instance_group" "managers" {
   named_port {
     name = "https"
     port = 3443
-  }
-}
-
-resource "null_resource" "wait_for_shuffle_deployment" {
-  depends_on = [google_compute_instance.swarm_manager]
-
-  provisioner "local-exec" {
-    command     = "bash ${path.module}/scripts/wait-for-shuffle.sh http://${google_compute_instance.swarm_manager[0].network_interface[0].access_config[0].nat_ip}:3001 ${google_compute_instance.swarm_manager[0].name} ${google_compute_instance.swarm_manager[0].zone}"
-    interpreter = ["bash", "-c"]
-  }
-
-  # Trigger re-provisioning if primary manager is recreated
-  triggers = {
-    instance_id = google_compute_instance.swarm_manager[0].id
   }
 }
 

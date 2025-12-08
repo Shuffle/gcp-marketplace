@@ -63,6 +63,10 @@ if [[ "${NFS_RUNNING}" == "false" ]]; then
     chmod +x "${NFS_SETUP_SCRIPT}"
     bash "${NFS_SETUP_SCRIPT}"
     echo "✅ NFS server setup completed"
+    
+    # Wait for NFS to be ready
+    sleep 5
+    
   else
     echo "❌ NFS setup script not found: ${NFS_SETUP_SCRIPT}"
     echo "Please ensure setup-nfs-server.sh is in the current directory"
