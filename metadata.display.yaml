@@ -36,8 +36,8 @@ spec:
           name: source_image
           title: Source Image
           enumValueLabels:
-            - label: "shuffle"
-              value: "projects/shuffle-public/global/images/shuffle-license-image-20251205"
+            - label: shuffle-ubuntu2404-x86-64-20251208
+              value: projects/shuffle-public/global/images/shuffle-ubuntu2404-x86-64-20251208
           xGoogleProperty:
             type: ET_GCE_DISK_IMAGE
             zoneProperty: zone

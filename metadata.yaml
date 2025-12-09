@@ -63,7 +63,7 @@ spec:
       - name: source_image
         description: Source image for VMs. If empty, uses Ubuntu 22.04 LTS
         varType: string
-        defaultValue: projects/shuffle-public/global/images/shuffle-license-image-20251205
+        defaultValue: projects/shuffle-public/global/images/shuffle-ubuntu2404-x86-64-20251208
 
       - name: subnet_cidr
         description: CIDR range for the Shuffle subnet
