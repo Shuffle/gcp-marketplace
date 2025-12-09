@@ -13,6 +13,16 @@ terraform {
       source  = "hashicorp/null"
       version = "~> 3.0"
     }
+
+    http = {
+      source  = "hashicorp/http"
+      version = "~> 3.0"
+    }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.9"
+    }
+
   }
 }
 
@@ -237,6 +247,65 @@ resource "google_compute_instance_group" "managers" {
   named_port {
     name = "https"
     port = 3443
+  }
+}
+
+
+locals {
+  primary_manager_ip = google_compute_instance.swarm_manager[0].network_interface[0].access_config[0].nat_ip
+  frontend_url       = "http://${local.primary_manager_ip}:3001"
+}
+
+
+resource "time_sleep" "wait_for_shuffle_boot" {
+  depends_on = [google_compute_instance.swarm_manager]
+
+  # Give the VMs 60s to boot and start Shuffle
+  create_duration = "60s"
+}
+
+
+
+
+data "http" "shuffle_checkusers" {
+  depends_on = [
+    time_sleep.wait_for_shuffle_boot,
+  ]
+
+  url = "${local.frontend_url}/api/v1/checkusers"
+  retry {
+    attempts     = 50      # MAX_ATTEMPTS=50
+    min_delay_ms = 60000   # 60 seconds
+    max_delay_ms = 60000
+  }
+}
+
+
+
+resource "null_resource" "wait_for_shuffle_deployment" {
+  depends_on = [
+    data.http.shuffle_checkusers,
+  ]
+
+  lifecycle {
+    postcondition {
+      # Require HTTP 200; anything else is treated as failure
+      condition = data.http.shuffle_checkusers.status_code == 200
+
+      error_message = <<-EOT
+        Timeout or failure while waiting for Shuffle to become accessible at: ${local.frontend_url}
+
+        We attempted to call: ${local.frontend_url}/api/v1/checkusers
+        up to 50 times (about 50 minutes) after VM boot.
+
+        The VM may still be starting up or Shuffle may have failed to start.
+        Check the VM startup logs for details, for example:
+
+          gcloud compute ssh ${google_compute_instance.swarm_manager[0].name} --zone=${google_compute_instance.swarm_manager[0].zone}
+
+        Then inspect the Shuffle service logs and retry the deployment.
+      EOT
+    }
   }
 }
 
