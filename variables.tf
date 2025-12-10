@@ -9,7 +9,7 @@ variable "goog_cm_deployment_name" {
 }
 
 variable "zone" {
-  description = "The zone where Shuffle cluster will be deployed"
+  description = "The zone where Shuffle cluster will be deployed. Choose a zone close to your users for best performance. If more than one node is deployed, they will be distributed across multiple zones within the selected region."
   type        = string
 }
 

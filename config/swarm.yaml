@@ -22,7 +22,7 @@ services:
         failure_action: rollback
 
   backend:
-    image: ghcr.io/shuffle/shuffle-backend:latest
+    image: ghcr.io/shuffle/shuffle-backend:nightly
     hostname: shuffle-backend
     networks:
       - shuffle
@@ -47,7 +47,7 @@ services:
         failure_action: rollback
 
   orborus:
-    image: ghcr.io/shuffle/shuffle-orborus:latest
+    image: ghcr.io/shuffle/shuffle-orborus:nightly
     hostname: shuffle-orborus
     networks:
       - shuffle
@@ -60,7 +60,7 @@ services:
       - BASE_URL=http://shuffle_backend:5001
       - SHUFFLE_STATS_DISABLED=true
       - SHUFFLE_SWARM_CONFIG=run
-      - SHUFFLE_WORKER_IMAGE=ghcr.io/shuffle/shuffle-worker:latest
+      - SHUFFLE_WORKER_IMAGE=ghcr.io/shuffle/shuffle-worker:nightly
       - SHUFFLE_APP_REPLICAS=2
       - SHUFFLE_WORKER_SERVER_URL=http://shuffle-workers:33333
       - SHUFFLE_SWARM_NETWORK_NAME=shuffle_swarm_executions

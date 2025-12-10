@@ -34,7 +34,7 @@ spec:
         required: true
 
       - name: zone
-        description: The zone where Shuffle cluster will be deployed
+        description: The zone where Shuffle cluster will be deployed. Choose a zone close to your users for best performance. If more than one node is deployed, they will be distributed across multiple zones within the selected region.
         varType: string
         required: true
 
@@ -133,9 +133,6 @@ spec:
 
       - name: swarm_join_command_worker
         description: Command to join swarm as worker (retrieve from primary manager)
-
-      - name: post_deployment_instructions
-        description: Instructions after deployment
 
   requirements:
     services:
