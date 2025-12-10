@@ -66,27 +66,26 @@ output "swarm_join_command_worker" {
 output "post_deployment_instructions" {
   description = "Instructions after deployment"
   value       = <<-EOT
-    <h2>Shuffle Deployment Complete!</h2>
+    =================================================================
+    Shuffle Deployment Complete!
+    =================================================================
     
-    <h3>Access URLs</h3>
-    <ul>
-      <li><strong>Frontend (External):</strong> <a href="http://${google_compute_instance.swarm_manager[0].network_interface[0].access_config[0].nat_ip}:3001" target="_blank">http://${google_compute_instance.swarm_manager[0].network_interface[0].access_config[0].nat_ip}:3001</a></li>
-      <li><strong>OpenSearch (Internal):</strong> http://${google_compute_instance.swarm_manager[0].network_interface[0].network_ip}:9200</li>
-    </ul>
+    Access URLs:
+    - Frontend (External): http://${google_compute_instance.swarm_manager[0].network_interface[0].access_config[0].nat_ip}:3001
+    - OpenSearch (Internal): http://${google_compute_instance.swarm_manager[0].network_interface[0].network_ip}:9200
     
-    <p><em><strong>Note:</strong> Only port 3001 is exposed externally for security. All other services are accessible only within the VPC.</em></p>
+    Note: Only port 3001 is exposed externally for security.
+    All other services are accessible only within the VPC.
     
-    <h3>Cluster Information</h3>
-    <ul>
-      <li><strong>Total Nodes:</strong> ${local.total_nodes}</li>
-      <li><strong>Node Type:</strong> All nodes are Swarm managers</li>
-    </ul>
+    Cluster Information:
+    - Total Nodes: ${local.total_nodes}
+    - All nodes are Swarm managers
     
-    <h3>Management Commands</h3>
-    <ul>
-      <li><strong>SSH to primary manager:</strong><br><code>gcloud compute ssh ${google_compute_instance.swarm_manager[0].name} --zone=${google_compute_instance.swarm_manager[0].zone}</code></li>
-      <li><strong>View stack services:</strong><br><code>docker stack services shuffle</code></li>
-      <li><strong>View service logs:</strong><br><code>docker service logs shuffle_&lt;service-name&gt;</code></li>
-    </ul>
+    Management:
+    - SSH to primary manager: gcloud compute ssh ${google_compute_instance.swarm_manager[0].name} --zone=${google_compute_instance.swarm_manager[0].zone}
+    - View stack: docker stack services shuffle
+    - View logs: docker service logs shuffle_<service-name>
+    
+    =================================================================
   EOT
 }

@@ -45,7 +45,7 @@ spec:
         zone:
           name: zone
           title: Zone
-          tooltip: The zone where Shuffle cluster will be deployed
+          tooltip: The zone where Shuffle cluster will be deployed. Choose a zone close to your users for best performance. If more than one node is deployed, they will be distributed across multiple zones within the selected region.
           xGoogleProperty:
             type: ET_GCE_ZONE
 
@@ -158,16 +158,16 @@ spec:
 
       suggestedActions:
         - heading: Access Shuffle Web Interface
-          description: 'Open the Shuffle frontend at: <a href="http://${shuffle_frontend_url}">http://${shuffle_frontend_url}</a>'
+          description: '<p>The Shuffle frontend URL will be available in the <strong>Outputs</strong> section once deployment is complete.</p><p>Access it at: <strong>shuffle_frontend_url</strong> (port 3001)</p>'
 
         - heading: SSH into primary manager node
-          description: 'SSH to the primary manager node: <code>gcloud compute ssh ${manager_instances[0].name} --zone=${manager_instances[0].zone}</code>'
+          description: '<p>Connect to your primary manager node using:</p><code>gcloud compute ssh &lt;INSTANCE_NAME&gt; --zone=&lt;ZONE&gt;</code><p><em>Replace &lt;INSTANCE_NAME&gt; and &lt;ZONE&gt; with values from the Outputs section.</em></p>'
 
         - heading: View Docker services
-          description: 'Check the status of Shuffle services: <code>sudo docker stack services shuffle</code>'
+          description: '<p>Once connected via SSH, check the status of all Shuffle services:</p><code>sudo docker stack services shuffle</code>'
 
         - heading: View service logs
-          description: 'View logs for a specific service: <code>sudo docker service logs shuffle_&lt;service-name&gt;</code>'
+          description: '<p>To troubleshoot or monitor a specific service:</p><code>sudo docker service logs shuffle_&lt;service-name&gt;</code><p><em>Example: <code>sudo docker service logs shuffle_backend</code></em></p>'
 
   requirements:
     services:

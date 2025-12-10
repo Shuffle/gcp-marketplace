@@ -35,15 +35,29 @@ locals {
   deployment_name = var.goog_cm_deployment_name
   network_name    = "${local.deployment_name}-network"
   
-  # Extract region from zone (e.g., us-central1-a -> us-central1)
+  # Extract region from zone (e.g., europe-west3-a -> europe-west3)
   region = join("-", slice(split("-", var.zone), 0, 2))
-
-  # Get all available zones in the region
-  available_zones = data.google_compute_zones.available.names
   
-  # For single node: use first zone (zone-a)
-  # For multiple nodes: distribute across zones (a, b, c, etc.)
-  zones = local.available_zones
+  # Extract zone suffix (e.g., europe-west3-a -> a)
+  input_zone_suffix = element(split("-", var.zone), length(split("-", var.zone)) - 1)
+
+  # Get all available zones in the region from GCP
+  available_zone_names = data.google_compute_zones.available.names
+  
+  # Extract just the suffix letters from available zones (e.g., ["a", "b", "c"])
+  available_zone_suffixes = [
+    for zone in local.available_zone_names : 
+    element(split("-", zone), length(split("-", zone)) - 1)
+  ]
+  
+  # Find starting index in available zones
+  start_index = index(local.available_zone_suffixes, local.input_zone_suffix)
+  
+  # Create ordered zones starting from input zone, using only available zones
+  zones = [
+    for i in range(var.node_count) : 
+    "${local.region}-${local.available_zone_suffixes[(local.start_index + i) % length(local.available_zone_suffixes)]}"
+  ]
 
   total_nodes   = var.node_count
   manager_nodes = var.node_count  # All nodes are managers
@@ -61,7 +75,6 @@ data "google_compute_zones" "available" {
   region  = local.region
   status  = "UP"
 }
-
 
 resource "google_compute_network" "shuffle_network" {
   name                    = local.network_name
