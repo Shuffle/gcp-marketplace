@@ -23,6 +23,27 @@ echo "  Is Primary: ${IS_PRIMARY}"
 echo "  Deployment: ${DEPLOYMENT_NAME}"
 echo "  Total Nodes: ${TOTAL_NODES}"
 
+echo "Waiting for package manager lock to be released..."
+timeout=300
+elapsed=0
+while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
+      fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || \
+      fuser /var/lib/dpkg/lock >/dev/null 2>&1; do
+  if [ $elapsed -ge $timeout ]; then
+    echo "Timeout waiting for package manager lock. Force-killing blocking processes..."
+    pkill -9 -f unattended-upgrade || true
+    pkill -9 -f apt || true
+    pkill -9 -f dpkg || true
+    sleep 5
+    break
+  fi
+  echo "Waiting for package manager to become available... ($elapsed/$timeout seconds)"
+  sleep 5
+  elapsed=$((elapsed + 5))
+done
+
+dpkg --configure -a 2>/dev/null || true
+
 # Update system and install dependencies
 apt-get update
 apt-get install -y \
