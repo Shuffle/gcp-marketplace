@@ -1,3 +1,18 @@
+# Copyright 2025 Shuffle LLC. All Rights Reserved.
+#
+# This Software is proprietary and confidential. Unauthorized copying,
+# distribution, modification, or use of this file, via any medium, is
+# strictly prohibited.
+#
+# Licensed for use only under the End-User License Agreement (EULA)
+# available at: https://shuffler.io/legal/GCP_EULA
+#
+# By deploying or using this Software, you acknowledge that you have read,
+# understood, and agree to be bound by the terms and conditions of the EULA.
+#
+# This deployment package is made available through Google Cloud Marketplace
+# and is subject to the licensing terms specified in the EULA.
+
 apiVersion: blueprints.cloud.google.com/v1alpha1
 kind: BlueprintMetadata
 metadata:
@@ -13,13 +28,21 @@ spec:
       flavor: Terraform
       version: ">= 1.0"
     description:
-      tagline: Open-source SOAR platform for security automation
+      tagline: SOAR platform for security orchestration, automation and response
       detailed: |
-        Shuffle is an open-source Security Orchestration, Automation and Response (SOAR) platform 
-        that helps security teams automate repetitive tasks and connect different security tools.
+        Shuffle is a Security Orchestration, Automation and Response (SOAR) platform that helps 
+        security teams automate repetitive tasks and connect different security tools.
         
-        This deployment creates a highly available Docker Swarm cluster with automatic NFS configuration,
-        OpenSearch for data storage, and load-balanced frontend/backend services.
+        This proprietary deployment package deploys the free open-source version of Shuffle in Docker 
+        Swarm mode within your Google Cloud Platform environment. All infrastructure and data remain 
+        within your Customer Environment. The deployment creates a Docker Swarm cluster with automatic 
+        NFS configuration, OpenSearch for data storage, and load-balanced frontend/backend services.
+        
+        To learn more about the differences between free open-source and enterprise versions, visit:
+        https://shuffler.io/articles/Shuffle_Open_Source
+        
+        By deploying this Software, you agree to the End-User License Agreement at:
+        https://shuffler.io/legal/GCP_EULA
         
   interfaces:
     variables:
@@ -39,7 +62,7 @@ spec:
         required: true
 
       - name: node_count
-        description: Total number of nodes in the Shuffle cluster (min 1, max 10). Single node for testing, 3+ nodes for production HA.
+        description: Total number of nodes in the Shuffle cluster (min 1, max 10). Single node for testing, 3+ nodes for production deployments.
         varType: integer
         defaultValue: 1
         required: true
