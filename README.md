@@ -299,7 +299,6 @@ For support, please visit:
 - Documentation: https://shuffler.io/docs
 - GitHub Issues: https://github.com/Shuffle/Shuffle/issues
 - Community Discord: https://discord.gg/B2CBzUm
-- Support Email: support@shuffler.io
 
 ## Requirements
 
