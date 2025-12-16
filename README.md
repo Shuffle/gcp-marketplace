@@ -297,13 +297,9 @@ For support, please visit:
 - Website: https://shuffler.io
 - Email: support@shuffler.io
 - Documentation: https://shuffler.io/docs
-
-## Support
-
-- **Shuffle Documentation**: https://shuffler.io/docs
-- **GitHub Issues**: https://github.com/Shuffle/Shuffle/issues
-- **Community Discord**: https://discord.gg/B2CBzUm
-- **Support Email**: support@shuffler.io
+- GitHub Issues: https://github.com/Shuffle/Shuffle/issues
+- Community Discord: https://discord.gg/B2CBzUm
+- Support Email: support@shuffler.io
 
 ## Requirements
 
