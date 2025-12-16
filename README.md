@@ -1,8 +1,12 @@
 # Shuffle Security Orchestration Platform
 
-This module deploys [Shuffle](https://shuffler.io), an open-source Security Orchestration, Automation and Response (SOAR) platform, on Google Cloud Platform using Terraform.
+This proprietary deployment package deploys the free open-source version of [Shuffle](https://shuffler.io) in Docker Swarm mode on Google Cloud Platform using Terraform.
 
-Shuffle helps security teams automate repetitive tasks and connect different security tools through a visual workflow editor. This deployment creates a highly available Docker Swarm cluster with automatic NFS configuration, OpenSearch for data storage, and load-balanced frontend/backend services.
+Shuffle is a Security Orchestration, Automation and Response (SOAR) platform that helps security teams automate repetitive tasks and connect different security tools through a visual workflow editor. This deployment creates a Docker Swarm cluster with automatic NFS configuration, OpenSearch for data storage, and load-balanced frontend/backend services.
+
+**To learn more about the differences between free open-source and enterprise versions, visit:** https://shuffler.io/articles/Shuffle_Open_Source
+
+**By deploying this Software, you agree to the End-User License Agreement at:** https://shuffler.io/legal/GCP_EULA
 
 ## Architecture
 
@@ -32,31 +36,29 @@ Shuffle helps security teams automate repetitive tasks and connect different sec
 
 ```hcl
 module "shuffle" {
-  source = "./terraform"
+  source = "./"
 
   project_id              = "your-project-id"
   goog_cm_deployment_name = "shuffle-deployment"
-  region                  = "us-central1"
+  zone                    = "us-central1-a"
   node_count              = 1
   machine_type            = "e2-standard-2"
-  shuffle_default_username = "admin@example.com"
 }
 ```
 
-### High Availability Deployment (Multi-Node)
+### Multi-Node Deployment (3 Nodes)
 
 ```hcl
 module "shuffle" {
-  source = "./terraform"
+  source = "./"
 
   project_id              = "your-project-id"
-  goog_cm_deployment_name = "shuffle-ha-deployment"
-  region                  = "us-central1"
+  goog_cm_deployment_name = "shuffle-deployment"
+  zone                    = "us-central1-a"
   node_count              = 3
   machine_type            = "e2-standard-4"
   boot_disk_size          = 250
   boot_disk_type          = "pd-ssd"
-  shuffle_default_username = "admin@example.com"
   environment             = "production"
   enable_cloud_logging    = true
   enable_cloud_monitoring = true
@@ -67,11 +69,11 @@ module "shuffle" {
 
 ```hcl
 module "shuffle" {
-  source = "./terraform"
+  source = "./"
 
   project_id              = "your-project-id"
   goog_cm_deployment_name = "shuffle-prod"
-  region                  = "us-east1"
+  zone                    = "us-east1-b"
   node_count              = 5
   machine_type            = "e2-standard-4"
   boot_disk_size          = 500
@@ -81,9 +83,6 @@ module "shuffle" {
   subnet_cidr            = "10.100.0.0/16"
   external_access_cidrs  = "203.0.113.0/24,198.51.100.0/24"
   ssh_source_ranges      = "203.0.113.0/24"
-  
-  # Admin configuration
-  shuffle_default_username = "security-admin@company.com"
   
   # Monitoring
   environment             = "production"
@@ -101,16 +100,9 @@ After deployment completes (approximately 10-15 minutes), access Shuffle:
    terraform output shuffle_frontend_url
    ```
 
-2. **Retrieve the admin password**:
-   ```bash
-   terraform output admin_password
-   ```
+2. **Access the web interface** at the displayed URL (port 3001)
 
-3. **Access the web interface** at the displayed URL (port 3001)
-
-4. **Login** with:
-   - Username: Your configured email address
-   - Password: From the output above
+3. **Complete initial setup** through the web interface to create your admin account
 
 ## Post-Deployment
 
@@ -156,18 +148,17 @@ curl http://localhost:9200/_cluster/health?pretty
 |------|-------------|------|---------|:--------:|
 | project\_id | The Google Cloud project ID | `string` | n/a | yes |
 | goog\_cm\_deployment\_name | Deployment name from Google Cloud Marketplace | `string` | n/a | yes |
-| shuffle\_default\_username | Default admin username for Shuffle (email format recommended) | `string` | n/a | yes |
-| region | The Google Cloud region for deployment (nodes will be distributed across zones within this region) | `string` | `"us-central1"` | no |
-| node\_count | Total number of nodes in the Shuffle cluster (min 1, max 10). Single node for testing, 3+ nodes for production HA. | `number` | `1` | no |
+| zone | The zone where Shuffle cluster will be deployed. If more than one node is deployed, they will be distributed across multiple zones within the selected region. | `string` | n/a | yes |
+| node\_count | Total number of nodes in the Shuffle cluster (min 1, max 10). Single node for testing, 3+ nodes for production deployments. | `number` | `1` | no |
 | machine\_type | GCP machine type for Shuffle nodes. e2-standard-2 (2 vCPUs, 8GB RAM) recommended for single node, e2-standard-4 for multi-node. | `string` | `"e2-standard-2"` | no |
-| boot\_disk\_size | Boot disk size in GB | `number` | `120` | no |
-| boot\_disk\_type | Boot disk type | `string` | `"pd-standard"` | no |
-| source\_image | Source image for VMs. If empty, uses Ubuntu 22.04 LTS | `string` | `""` | no |
-| subnet\_cidr | CIDR range for the Shuffle subnet | `string` | `"10.224.0.0/16"` | no |
-| external\_access\_cidrs | Comma-separated CIDR ranges allowed to access Shuffle UI (port 3001) | `string` | `"0.0.0.0/0"` | no |
+| boot\_disk\_size | Boot disk size in GB (120-1000 GB) | `number` | `120` | no |
+| boot\_disk\_type | Boot disk type (pd-standard, pd-ssd, or pd-balanced) | `string` | `"pd-standard"` | no |
+| source\_image | Source image for VMs | `string` | `"projects/shuffle-public/global/images/shuffle-ubuntu2404-x86-64-20251208"` | no |
+| subnet\_cidr | CIDR range for the Shuffle subnet (must be valid IPv4 CIDR) | `string` | `"10.224.0.0/16"` | no |
+| external\_access\_cidrs | Comma-separated CIDR ranges allowed to access Shuffle UI (port 3001, must be valid IPv4 CIDR) | `string` | `"0.0.0.0/0"` | no |
 | enable\_ssh | Enable SSH access to nodes | `bool` | `true` | no |
-| ssh\_source\_ranges | Comma-separated CIDR ranges allowed for SSH access | `string` | `"0.0.0.0/0"` | no |
-| environment | Environment label (dev, staging, production) | `string` | `"production"` | no |
+| ssh\_source\_ranges | Comma-separated CIDR ranges allowed for SSH access (must be valid IPv4 CIDR) | `string` | `"0.0.0.0/0"` | no |
+| environment | Environment label (dev, staging, or production) | `string` | `"production"` | no |
 | enable\_cloud\_logging | Enable Google Cloud Logging | `bool` | `true` | no |
 | enable\_cloud\_monitoring | Enable Google Cloud Monitoring | `bool` | `true` | no |
 
@@ -186,8 +177,6 @@ curl http://localhost:9200/_cluster/health?pretty
 | nfs\_server\_ip | IP address of the NFS server (primary manager) |
 | swarm\_join\_command\_manager | Command to join swarm as manager (retrieve from primary manager) |
 | swarm\_join\_command\_worker | Command to join swarm as worker (retrieve from primary manager) |
-| admin\_username | Default admin username for Shuffle |
-| admin\_password | Default admin password for Shuffle (auto-generated, sensitive) |
 | post\_deployment\_instructions | Instructions after deployment |
 
 ## Troubleshooting
@@ -296,7 +285,18 @@ docker service update --image ghcr.io/shuffle/shuffle-orborus:latest shuffle_orb
 
 ## License
 
-<!-- Add EULA here -->
+This Software is proprietary and confidential. Unauthorized copying, distribution, modification, or use of this file, via any medium, is strictly prohibited.
+
+Licensed for use only under the End-User License Agreement (EULA) available at: https://shuffler.io/legal/GCP_EULA
+
+By deploying or using this Software, you acknowledge that you have read, understood, and agree to be bound by the terms and conditions of the EULA.
+
+## Support
+
+For support, please visit:
+- Website: https://shuffler.io
+- Email: support@shuffler.io
+- Documentation: https://shuffler.io/docs
 
 ## Support
 
