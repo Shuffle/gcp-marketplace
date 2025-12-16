@@ -91,6 +91,393 @@ module "shuffle" {
 }
 ```
 
+## CLI-Based Deployment Guide
+
+### Prerequisites Setup
+
+1. **Install Google Cloud SDK**
+   
+   Download and install the gcloud CLI:
+   - **Windows**: Download from https://cloud.google.com/sdk/docs/install
+   - **macOS**: `brew install google-cloud-sdk`
+   - **Linux**: 
+     ```bash
+     curl https://sdk.cloud.google.com | bash
+     exec -l $SHELL
+     ```
+
+2. **Install Terraform**
+   
+   - **Windows**: Download from https://www.terraform.io/downloads or use Chocolatey:
+     ```powershell
+     choco install terraform
+     ```
+   - **macOS**: 
+     ```bash
+     brew tap hashicorp/tap
+     brew install hashicorp/tap/terraform
+     ```
+   - **Linux**:
+     ```bash
+     wget https://releases.hashicorp.com/terraform/1.6.0/terraform_1.6.0_linux_amd64.zip
+     unzip terraform_1.6.0_linux_amd64.zip
+     sudo mv terraform /usr/local/bin/
+     ```
+
+3. **Verify Installations**
+   ```bash
+   gcloud --version
+   terraform --version
+   ```
+
+### Step-by-Step Deployment
+
+#### Step 1: Authenticate with Google Cloud
+
+```bash
+# Login to your Google Cloud account
+gcloud auth login
+
+# Authenticate Terraform to use your credentials
+gcloud auth application-default login
+
+# Set your project (replace with your actual project ID)
+gcloud config set project YOUR_PROJECT_ID
+
+# Verify current configuration
+gcloud config list
+```
+
+#### Step 2: Enable Required APIs
+
+```bash
+# Enable Compute Engine API
+gcloud services enable compute.googleapis.com
+
+# Enable Cloud Logging API (optional but recommended)
+gcloud services enable logging.googleapis.com
+
+# Enable Cloud Monitoring API (optional but recommended)
+gcloud services enable monitoring.googleapis.com
+
+# Verify enabled services
+gcloud services list --enabled
+```
+
+#### Step 3: Configure Deployment Variables
+
+Create a `terraform.tfvars` file with your configuration:
+
+```bash
+# For single-node testing deployment
+cat > terraform.tfvars << 'EOF'
+goog_cm_deployment_name = "shuffle-vm"
+zone                    = "us-central1-a"
+node_count              = 1
+machine_type            = "e2-standard-2"
+boot_disk_size          = 120
+enable_cloud_logging    = true
+enable_cloud_monitoring = true
+EOF
+```
+
+Or for production multi-node deployment:
+
+```bash
+cat > terraform.tfvars << 'EOF'
+goog_cm_deployment_name = "shuffle-vm"
+zone                    = "us-east1-b"
+node_count              = 3
+machine_type            = "e2-standard-4"
+boot_disk_size          = 250
+boot_disk_type          = "pd-ssd"
+subnet_cidr             = "10.100.0.0/16"
+external_access_cidrs   = "YOUR_IP_ADDRESS/32"
+ssh_source_ranges       = "YOUR_IP_ADDRESS/32"
+environment             = "production"
+enable_cloud_logging    = true
+enable_cloud_monitoring = true
+EOF
+```
+
+Replace `YOUR_IP_ADDRESS` with your actual IP address to restrict access:
+
+#### Step 5: Initialize Terraform
+
+```bash
+# Initialize Terraform and download required providers
+terraform init
+
+# Validate configuration
+terraform validate
+```
+
+#### Step 6: Review Deployment Plan
+
+```bash
+# Generate and review the execution plan
+terraform plan -var project_id=<PROJECT_ID>  -var-file terraform.tfvars    
+# Save the plan to a file for review
+terraform plan -out=tfplan
+
+# Review the saved plan
+terraform show tfplan
+```
+
+#### Step 7: Deploy Shuffle
+
+```bash
+# Apply the configuration
+terraform apply -var project_id=<PROJECT_ID>  -var-file terraform.tfvars
+
+```
+
+**Expected Output**:
+```
+Apply complete! Resources: XX added, 0 changed, 0 destroyed.
+
+Outputs:
+
+deployment_name = "shuffle-deployment"
+shuffle_frontend_url = "http://XX.XX.XX.XX:3001"
+manager_instances = [...]
+```
+
+**Deployment Time**: Approximately 10-15 minutes
+
+#### Step 8: Verify Deployment
+
+```bash
+# Get deployment outputs
+terraform output
+
+# Get specific output
+terraform output shuffle_frontend_url
+
+# Export outputs to file
+terraform output -json > deployment-outputs.json
+```
+
+### Post-Deployment CLI Operations
+
+#### Connect to Instances
+
+```bash
+# SSH to primary manager
+gcloud compute ssh shuffle-vm-manager-1 --zone=us-central1-a
+
+# SSH with custom SSH key
+gcloud compute ssh shuffle-vm-manager-1 --zone=us-central1-a --ssh-key-file=~/.ssh/my-key
+
+# SSH to specific node
+gcloud compute ssh shuffle-vm-manager-2 --zone=us-central1-b
+```
+
+#### Monitor Deployment Status
+
+```bash
+# Check instance status
+gcloud compute instances list --filter="name~'shuffle-vm'"
+
+# View instance details
+gcloud compute instances describe shuffle-vm-manager-1 --zone=us-central1-a
+
+# Check instance serial port output (startup logs)
+gcloud compute instances get-serial-port-output shuffle-vm-manager-1 --zone=us-central1-a
+```
+
+#### Docker Swarm Management via CLI
+
+After SSH into a manager node:
+
+```bash
+# Check swarm status
+docker node ls
+
+# View all services
+docker service ls
+
+# Check service details
+docker service ps shuffle_frontend
+docker service ps shuffle_backend
+docker service ps shuffle_orborus
+
+# View service logs
+docker service logs shuffle_frontend --tail 50 --follow
+docker service logs shuffle_backend --tail 50 --follow
+
+# Scale services (if needed)
+docker service scale shuffle_frontend=2
+docker service scale shuffle_backend=2
+
+# Check OpenSearch health
+curl http://localhost:9200/_cluster/health?pretty
+
+# View OpenSearch indices
+curl http://localhost:9200/_cat/indices?v
+```
+
+#### Update Firewall Rules
+
+```bash
+# Add additional IP to external access
+gcloud compute firewall-rules update shuffle-deployment-allow-external \
+  --source-ranges="203.0.113.0/24,198.51.100.0/24"
+
+# Update SSH access rules
+gcloud compute firewall-rules update shuffle-deployment-allow-ssh \
+  --source-ranges="YOUR_NEW_IP/32"
+
+# List current firewall rules
+gcloud compute firewall-rules list --filter="name~'shuffle'"
+```
+
+#### Backup Operations
+
+```bash
+# Create disk snapshots
+gcloud compute disks snapshot shuffle-vm-manager-1 \
+  --snapshot-names=shuffle-backup-$(date +%Y%m%d) \
+  --zone=us-central1-a
+
+# List snapshots
+gcloud compute snapshots list --filter="name~'shuffle'"
+
+# Backup via SSH (execute on manager node)
+gcloud compute ssh shuffle-vm-manager-1 --zone=us-central1-a --command \
+  "sudo tar -czf /tmp/shuffle-nfs-backup-$(date +%F).tar.gz /srv/nfs/"
+
+# Download backup from instance
+gcloud compute scp shuffle-vm-manager-1:/tmp/shuffle-nfs-backup-*.tar.gz ./ \
+  --zone=us-central1-a
+```
+
+#### Monitoring and Logs
+
+```bash
+# View Cloud Logging logs
+gcloud logging read "resource.type=gce_instance AND resource.labels.instance_id:shuffle-vm" \
+  --limit 50 --format json
+
+# Stream logs in real-time
+gcloud logging tail "resource.type=gce_instance AND resource.labels.instance_id:shuffle-vm"
+
+# Check specific service logs
+gcloud logging read "resource.type=gce_instance AND textPayload:shuffle" \
+  --limit 100
+
+# Export logs to file
+gcloud logging read "resource.type=gce_instance AND resource.labels.instance_id:shuffle-vm" \
+  --format json > shuffle-logs-$(date +%F).json
+```
+
+#### Cleanup and Destruction
+
+```bash
+# Preview resources to be destroyed
+terraform plan -destroy
+
+# Destroy all resources
+terraform destroy
+
+# Confirm by typing 'yes' when prompted
+
+# Verify cleanup
+gcloud compute instances list --filter="name~'shuffle-vm'"
+gcloud compute firewall-rules list --filter="name~'shuffle'"
+
+# Remove local state files (optional)
+rm -f terraform.tfstate terraform.tfstate.backup tfplan
+```
+
+### Troubleshooting CLI Commands
+
+#### Check Deployment Status
+
+```bash
+# If deployment seems stuck, check startup script progress
+gcloud compute instances get-serial-port-output shuffle-vm-manager-1 \
+  --zone=us-central1-a | grep -A 20 "shuffle-startup"
+
+# Check if services are running
+gcloud compute ssh shuffle-vm-manager-1 --zone=us-central1-a --command \
+  "docker service ls"
+
+# View startup log file
+gcloud compute ssh shuffle-vm-manager-1 --zone=us-central1-a --command \
+  "sudo cat /var/log/shuffle-startup.log"
+```
+
+#### Network Connectivity Issues
+
+```bash
+# Test external connectivity to frontend
+curl -I http://$(terraform output -raw shuffle_frontend_url | cut -d'/' -f3)
+
+# Check firewall rules
+gcloud compute firewall-rules describe shuffle-deployment-allow-external
+
+# Test from specific source IP
+gcloud compute ssh shuffle-vm-manager-1 --zone=us-central1-a --command \
+  "curl -I http://localhost:3001"
+```
+
+#### Service Health Checks
+
+```bash
+# Check all service health
+gcloud compute ssh shuffle-vm-manager-1 --zone=us-central1-a --command \
+  "docker service ps shuffle_frontend shuffle_backend shuffle_orborus opensearch --no-trunc"
+
+# Restart a service if needed
+gcloud compute ssh shuffle-vm-manager-1 --zone=us-central1-a --command \
+  "docker service update --force shuffle_frontend"
+
+# Check OpenSearch status
+gcloud compute ssh shuffle-vm-manager-1 --zone=us-central1-a --command \
+  "curl -s http://localhost:9200/_cluster/health | python3 -m json.tool"
+```
+
+#### Manual Redeployment
+
+```bash
+# If automatic deployment failed, trigger manually
+gcloud compute ssh shuffle-vm-manager-1 --zone=us-central1-a --command \
+  "cd /opt/shuffle && sudo ./deploy.sh"
+
+# Monitor deployment progress
+gcloud compute ssh shuffle-vm-manager-1 --zone=us-central1-a --command \
+  "sudo tail -f /var/log/shuffle-startup.log"
+```
+
+### Quick Reference Commands
+
+```bash
+# Get frontend URL
+terraform output shuffle_frontend_url
+
+# SSH to primary manager
+gcloud compute ssh shuffle-vm-manager-1 --zone=$(terraform output -raw zone)
+
+# View all outputs
+terraform output -json | jq
+
+# Check instance status
+gcloud compute instances list --filter="name~'shuffle-vm'"
+
+# View service logs (from manager node)
+docker service logs shuffle_frontend --tail 100
+
+# Check swarm health (from manager node)
+docker node ls && docker service ls
+
+# Backup NFS data (from manager node)
+sudo tar -czf ~/shuffle-backup-$(date +%F).tar.gz /srv/nfs/
+
+# Update Shuffle images (from manager node)
+docker service update --image ghcr.io/shuffle/shuffle-frontend:latest shuffle_frontend
+```
+
 ## Accessing Shuffle
 
 After deployment completes (approximately 10-15 minutes), access Shuffle:
@@ -222,16 +609,6 @@ curl http://localhost:3001/api/v1/health
 # Check NFS mounts
 showmount -e localhost
 ```
-
-## Scaling
-
-To scale the cluster:
-
-1. Update `node_count` in your Terraform configuration
-2. Run `terraform apply`
-3. New nodes will automatically join the swarm
-
-**Note**: Scaling down requires manual node removal:
 
 ```bash
 docker node rm <node-name>
