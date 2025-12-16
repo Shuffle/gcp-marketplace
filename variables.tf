@@ -62,12 +62,25 @@ variable "subnet_cidr" {
   description = "CIDR range for the Shuffle subnet"
   type        = string
   default     = "10.224.0.0/16"
+
+  validation {
+    condition     = can(regex("^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/(3[0-2]|[1-2][0-9]|[0-9])$", var.subnet_cidr))
+    error_message = "Subnet CIDR must be valid IPv4 CIDR notation (e.g., 10.224.0.0/16, 172.16.0.0/12)."
+  }
 }
 
 variable "external_access_cidrs" {
   description = "Comma-separated CIDR ranges allowed to access Shuffle UI"
   type        = string
   default     = "0.0.0.0/0"
+
+  validation {
+    condition = alltrue([
+      for cidr in split(",", var.external_access_cidrs) : 
+      can(regex("^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/(3[0-2]|[1-2][0-9]|[0-9])$", trimspace(cidr)))
+    ])
+    error_message = "External access CIDRs must be valid IPv4 CIDR notation (e.g., 10.0.0.0/24, 0.0.0.0/0). Use comma-separated values for multiple CIDRs."
+  }
 }
 
 # HTTPS is not exposed externally for security
@@ -83,6 +96,14 @@ variable "ssh_source_ranges" {
   description = "Comma-separated CIDR ranges allowed for SSH access"
   type        = string
   default     = "0.0.0.0/0"
+
+  validation {
+    condition = alltrue([
+      for cidr in split(",", var.ssh_source_ranges) : 
+      can(regex("^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/(3[0-2]|[1-2][0-9]|[0-9])$", trimspace(cidr)))
+    ])
+    error_message = "SSH source ranges must be valid IPv4 CIDR notation (e.g., 192.168.1.0/24, 0.0.0.0/0). Use comma-separated values for multiple CIDRs."
+  }
 }
 
 variable "environment" {
