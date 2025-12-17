@@ -302,14 +302,18 @@ resource "null_resource" "wait_for_shuffle_deployment" {
 
   lifecycle {
     postcondition {
-      # Require HTTP 200; anything else is treated as failure
-      condition = data.http.shuffle_checkusers.status_code == 200
+      # Accept HTTP 200 or 401 as valid responses
+      # 200 = users configured, 401 = service running but requires authentication (expected for fresh deployment)
+      condition = contains([200, 401], data.http.shuffle_checkusers.status_code)
 
       error_message = <<-EOT
         Timeout or failure while waiting for Shuffle to become accessible at: ${local.frontend_url}
 
         We attempted to call: ${local.frontend_url}/api/v1/checkusers
         up to 50 times (about 50 minutes) after VM boot.
+        
+        Received status code: ${data.http.shuffle_checkusers.status_code}
+        Expected: 200 (OK) or 401 (Unauthorized - service ready)
 
         The VM may still be starting up or Shuffle may have failed to start.
         Check the VM startup logs for details, for example:
