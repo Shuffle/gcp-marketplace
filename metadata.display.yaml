@@ -116,6 +116,8 @@ spec:
           tooltip: 'Comma-separated CIDR ranges allowed to access Shuffle UI (port 3001). Use CIDR notation. <a href="https://cloud.google.com/compute/docs/networking#firewalls">Learn more</a>'
           placeholder: '0.0.0.0/0'
           section: networking
+          validation: 'Must be valid IPv4 CIDR notation (e.g., 10.0.0.0/24, 192.168.1.0/24, 0.0.0.0/0). Use comma-separated values for multiple ranges.'
+          regexValidation: '^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/(3[0-2]|[1-2][0-9]|[0-9]))(,\s*)?)+$'
 
         enable_ssh:
           name: enable_ssh
@@ -129,6 +131,8 @@ spec:
           tooltip: 'Comma-separated CIDR ranges allowed for SSH access. Use CIDR notation. <a href="https://cloud.google.com/compute/docs/networking#firewalls">Learn more</a>'
           placeholder: '0.0.0.0/0'
           section: networking
+          validation: 'Must be valid IPv4 CIDR notation (e.g., 10.0.0.0/24, 192.168.1.0/24, 0.0.0.0/0). Use comma-separated values for multiple ranges.'
+          regexValidation: '^(((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/(3[0-2]|[1-2][0-9]|[0-9]))(,\s*)?)+$'
 
         enable_cloud_logging:
           name: enable_cloud_logging
@@ -181,7 +185,7 @@ spec:
 
       suggestedActions:
         - heading: Access Shuffle Web Interface
-          description: '<p>The Shuffle frontend URL will be available in the <strong>Outputs</strong> section once deployment is complete.</p><p>Access it at: <strong>shuffle_frontend_url</strong> (port 3001)</p>'
+          description: '<p>The Shuffle frontend URL will be available in the <strong>Outputs</strong> section once deployment is complete.</p><p>Access it at: <strong>Shuffle Frontend Url</strong> (port 3001)</p>'
 
         - heading: SSH into primary manager node
           description: '<p>Connect to your primary manager node using:</p><code>gcloud compute ssh &lt;INSTANCE_NAME&gt; --zone=&lt;ZONE&gt;</code><p><em>Replace &lt;INSTANCE_NAME&gt; and &lt;ZONE&gt; with values from the Outputs section.</em></p>'

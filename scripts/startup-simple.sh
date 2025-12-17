@@ -23,21 +23,60 @@ echo "  Is Primary: ${IS_PRIMARY}"
 echo "  Deployment: ${DEPLOYMENT_NAME}"
 echo "  Total Nodes: ${TOTAL_NODES}"
 
-echo "Waiting for apt/dpkg locks..."
-for i in {1..120}; do
+echo "Waiting for cloud-init to complete..."
+cloud-init status --wait || true
+
+echo "Waiting for unattended-upgrades to complete..."
+# Wait for unattended-upgrades service to finish
+systemd-run --property="After=apt-daily.service apt-daily-upgrade.service" --wait /bin/true
+
+echo "Waiting for apt/dpkg locks to be released..."
+LOCK_WAIT_SUCCESS=false
+for i in {1..180}; do
   if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && \
      ! fuser /var/lib/apt/lists/lock >/dev/null 2>&1 && \
      ! fuser /var/lib/dpkg/lock >/dev/null 2>&1; then
+    echo "✅ All apt/dpkg locks released after ${i} attempts"
+    LOCK_WAIT_SUCCESS=true
     break
   fi
+  echo "Waiting for locks... (attempt $i/180)"
   sleep 5
 done
 
+if [[ "${LOCK_WAIT_SUCCESS}" != "true" ]]; then
+  echo "⚠️  Warning: Locks still held after waiting. Attempting to recover..."
+  # Kill unattended-upgrades if still running
+  pkill -9 unattended-upgr || true
+  sleep 5
+fi
+
+# Configure dpkg if needed
 dpkg --configure -a || true
-cloud-init status --wait || true
+
+# Function to run apt-get with retry logic
+run_apt_with_retry() {
+  local max_attempts=5
+  local attempt=1
+  
+  while [ $attempt -le $max_attempts ]; do
+    echo "Running apt-get (attempt $attempt/$max_attempts)..."
+    if "$@"; then
+      return 0
+    fi
+    
+    echo "apt-get failed, waiting before retry..."
+    sleep 10
+    attempt=$((attempt + 1))
+  done
+  
+  echo "ERROR: apt-get failed after $max_attempts attempts"
+  return 1
+}
+
 # Update system and install dependencies
-apt-get update || apt-get update || true
-apt-get install -y \
+run_apt_with_retry apt-get update
+run_apt_with_retry apt-get install -y \
     ca-certificates \
     curl \
     gnupg \
@@ -52,8 +91,8 @@ if ! command -v docker &> /dev/null; then
   echo "Installing Docker..."
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-  apt-get update
-  apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  run_apt_with_retry apt-get update
+  run_apt_with_retry apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
   systemctl enable docker
   systemctl start docker
 fi
