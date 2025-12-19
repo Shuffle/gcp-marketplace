@@ -23,36 +23,48 @@ echo "  Is Primary: ${IS_PRIMARY}"
 echo "  Deployment: ${DEPLOYMENT_NAME}"
 echo "  Total Nodes: ${TOTAL_NODES}"
 
+
+echo "Masking background apt services to avoid dpkg races..."
+
+systemctl mask --now unattended-upgrades.service \
+                    apt-daily.service \
+                    apt-daily-upgrade.service \
+                    apt-daily.timer \
+                    apt-daily-upgrade.timer || true
+
+
 echo "Waiting for cloud-init to complete..."
 cloud-init status --wait || true
 
 echo "Waiting for unattended-upgrades to complete..."
 # Wait for unattended-upgrades service to finish
-systemd-run --property="After=apt-daily.service apt-daily-upgrade.service" --wait /bin/true
 
-echo "Waiting for apt/dpkg locks to be released..."
-LOCK_WAIT_SUCCESS=false
-for i in {1..180}; do
+APT_OPTS="-o DPkg::Lock::Timeout=600 -o Dpkg::Use-Pty=0"
+
+echo "Waiting for cloud-init to complete..."
+cloud-init status --wait || true
+
+echo "Disabling unattended-upgrades during bootstrap..."
+
+systemctl stop unattended-upgrades apt-daily apt-daily-upgrade || true
+systemctl disable unattended-upgrades apt-daily apt-daily-upgrade || true
+
+echo "Waiting for dpkg locks to be released..."
+for i in {1..120}; do
   if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && \
      ! fuser /var/lib/apt/lists/lock >/dev/null 2>&1 && \
      ! fuser /var/lib/dpkg/lock >/dev/null 2>&1; then
-    echo "✅ All apt/dpkg locks released after ${i} attempts"
-    LOCK_WAIT_SUCCESS=true
+    echo "✅ dpkg is free"
     break
   fi
-  echo "Waiting for locks... (attempt $i/180)"
+
+  if [[ $i -eq 120 ]]; then
+    echo "❌ dpkg locks still held after waiting"
+    exit 1
+  fi
+
   sleep 5
 done
-
-if [[ "${LOCK_WAIT_SUCCESS}" != "true" ]]; then
-  echo "⚠️  Warning: Locks still held after waiting. Attempting to recover..."
-  # Kill unattended-upgrades if still running
-  pkill -9 unattended-upgr || true
-  sleep 5
-fi
-
-# Configure dpkg if needed
-dpkg --configure -a || true
 
 # Function to run apt-get with retry logic
 run_apt_with_retry() {
@@ -75,8 +87,8 @@ run_apt_with_retry() {
 }
 
 # Update system and install dependencies
-run_apt_with_retry apt-get update
-run_apt_with_retry apt-get install -y \
+run_apt_with_retry apt-get $APT_OPTS update
+run_apt_with_retry apt-get $APT_OPTS install -y \
     ca-certificates \
     curl \
     gnupg \
