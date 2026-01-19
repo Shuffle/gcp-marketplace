@@ -1,0 +1,54 @@
+[
+  {
+    "ParameterKey": "DeploymentName",
+    "ParameterValue": "shuffle-cluster"
+  },
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "production"
+  },
+  {
+    "ParameterKey": "NodeCount",
+    "ParameterValue": "1"
+  },
+  {
+    "ParameterKey": "InstanceType",
+    "ParameterValue": "t3.large"
+  },
+  {
+    "ParameterKey": "VolumeSize",
+    "ParameterValue": "120"
+  },
+  {
+    "ParameterKey": "VolumeType",
+    "ParameterValue": "gp3"
+  },
+  {
+    "ParameterKey": "VpcCIDR",
+    "ParameterValue": "10.224.0.0/16"
+  },
+  {
+    "ParameterKey": "SubnetCIDR",
+    "ParameterValue": "10.224.1.0/24"
+  },
+  {
+    "ParameterKey": "ExternalAccessCIDRs",
+    "ParameterValue": "0.0.0.0/0"
+  },
+  {
+    "ParameterKey": "EnableSSH",
+    "ParameterValue": "true"
+  },
+  {
+    "ParameterKey": "SSHAccessCIDRs",
+    "ParameterValue": "0.0.0.0/0"
+  },
+  {
+    "ParameterKey": "DefaultUsername",
+    "ParameterValue": "lalitdeore"
+  },
+  {
+    "ParameterKey": "DefaultPassword",
+    "ParameterValue": "lalitdeore"
+  }
+]
