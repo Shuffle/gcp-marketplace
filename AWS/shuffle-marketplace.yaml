@@ -1,0 +1,829 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Shuffle SOAR Platform - Docker Swarm Cluster Deployment
+  Deploys a highly available Shuffle cluster on AWS using EC2 instances with Docker Swarm.
+  Includes: VPC, Security Groups, EC2 Auto Scaling, NFS shared storage, OpenSearch, and load balancing.
+  
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Deployment Configuration"
+        Parameters:
+          - DeploymentName
+          - Environment
+      - Label:
+          default: "Instance Configuration"
+        Parameters:
+          - InstanceType
+          - NodeCount
+          - VolumeSize
+          - VolumeType
+      - Label:
+          default: "Network Configuration"
+        Parameters:
+          - VpcCIDR
+          - SubnetCIDR
+          - ExternalAccessCIDRs
+          - SSHAccessCIDRs
+          - EnableSSH
+      - Label:
+          default: "Shuffle Configuration"
+        Parameters:
+          - DefaultUsername
+          - DefaultPassword
+    ParameterLabels:
+      DeploymentName:
+        default: "Deployment Name"
+      NodeCount:
+        default: "Number of Nodes"
+      InstanceType:
+        default: "EC2 Instance Type"
+      VolumeSize:
+        default: "EBS Volume Size (GB)"
+
+Parameters:
+  DeploymentName:
+    Type: String
+    Description: Name for this Shuffle deployment (used for resource naming)
+    Default: shuffle-cluster
+    AllowedPattern: ^[a-z0-9-]+$
+    ConstraintDescription: Must contain only lowercase letters, numbers, and hyphens
+
+  Environment:
+    Type: String
+    Description: Environment type for this deployment
+    Default: production
+    AllowedValues:
+      - dev
+      - staging
+      - production
+
+  NodeCount:
+    Type: Number
+    Description: Total number of EC2 instances in the Shuffle cluster (1-10)
+    Default: 1
+    MinValue: 1
+    MaxValue: 10
+    ConstraintDescription: Must be between 1 and 10
+
+  InstanceType:
+    Type: String
+    Description: EC2 instance type for Shuffle nodes (minimum 2 vCPUs, 8GB RAM recommended)
+    Default: t3.large
+    AllowedValues:
+      - t3.large      # 2 vCPUs, 8GB RAM
+      - t3.xlarge     # 4 vCPUs, 16GB RAM
+      - t3.2xlarge    # 8 vCPUs, 32GB RAM
+      - m5.large      # 2 vCPUs, 8GB RAM
+      - m5.xlarge     # 4 vCPUs, 16GB RAM
+      - m5.2xlarge    # 8 vCPUs, 32GB RAM
+      - m6i.large     # 2 vCPUs, 8GB RAM
+      - m6i.xlarge    # 4 vCPUs, 16GB RAM
+      - m6i.2xlarge   # 8 vCPUs, 32GB RAM
+
+  VolumeSize:
+    Type: Number
+    Description: Size of the EBS root volume in GB
+    Default: 120
+    MinValue: 120
+    MaxValue: 1000
+    ConstraintDescription: Must be between 120 and 1000 GB
+
+  VolumeType:
+    Type: String
+    Description: EBS volume type
+    Default: gp3
+    AllowedValues:
+      - gp3  # General Purpose SSD (recommended)
+      - gp2  # General Purpose SSD
+      - io1  # Provisioned IOPS SSD
+      - io2  # Provisioned IOPS SSD
+
+  VpcCIDR:
+    Type: String
+    Description: CIDR block for the VPC
+    Default: 10.224.0.0/16
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: Must be a valid CIDR block (e.g., 10.224.0.0/16)
+
+  SubnetCIDR:
+    Type: String
+    Description: CIDR block for the subnet (must be within VPC CIDR)
+    Default: 10.224.1.0/24
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: Must be a valid CIDR block
+
+  ExternalAccessCIDRs:
+    Type: CommaDelimitedList
+    Description: Comma-separated list of CIDR blocks allowed to access Shuffle UI (port 3001)
+    Default: 0.0.0.0/0
+
+  EnableSSH:
+    Type: String
+    Description: Enable SSH access to instances
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  SSHAccessCIDRs:
+    Type: CommaDelimitedList
+    Description: Comma-separated list of CIDR blocks allowed SSH access (if enabled)
+    Default: 0.0.0.0/0
+
+  DefaultUsername:
+    Type: String
+    Description: Default admin username for Shuffle (minimum 3 characters, leave empty to set on first login)
+    Default: ''
+    NoEcho: false
+
+  DefaultPassword:
+    Type: String
+    Description: Default admin password for Shuffle (minimum 3 characters, leave empty to set on first login)
+    Default: ''
+    NoEcho: true
+
+Conditions:
+  EnableSSHAccess: !Equals [!Ref EnableSSH, 'true']
+  MultiNode: !Not [!Equals [!Ref NodeCount, 1]]
+  UseDefaultUsername: !Not [!Equals [!Ref DefaultUsername, '']]
+  UseDefaultPassword: !Not [!Equals [!Ref DefaultPassword, '']]
+
+Mappings:
+  # Ubuntu 22.04 LTS AMI IDs by region
+  # Note: Replace these with your custom Shuffle AMI IDs for AWS Marketplace
+  RegionMap:
+    us-east-1:
+      AMI: ami-0c7217cdde317cfec  # Ubuntu 22.04 LTS
+    us-east-2:
+      AMI: ami-0a695f0d95cefc163
+    us-west-1:
+      AMI: ami-0ce2cb35386fc22e9
+    us-west-2:
+      AMI: ami-008fe2fc65df48dac
+    eu-west-1:
+      AMI: ami-0905a3c97561e0b69
+    eu-west-2:
+      AMI: ami-0eb260c4d5475b901
+    eu-west-3:
+      AMI: ami-00983e8a26e4c9bd9
+    eu-central-1:
+      AMI: ami-0faab6bdbac9486fb
+    ap-southeast-1:
+      AMI: ami-0df7a207adb9748c7
+    ap-southeast-2:
+      AMI: ami-0310483fb2b488153
+    ap-northeast-1:
+      AMI: ami-0d52744d6551d851e
+    ap-northeast-2:
+      AMI: ami-0c9c942bd7bf113a2
+    sa-east-1:
+      AMI: ami-0af6e9042ea5a4e3e
+    ca-central-1:
+      AMI: ami-0a2e7efb4257c0907
+
+Resources:
+  # ==================== VPC and Networking ====================
+  
+  ShuffleVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${DeploymentName}-vpc'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: Shuffle
+
+  ShuffleInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${DeploymentName}-igw'
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref ShuffleVPC
+      InternetGatewayId: !Ref ShuffleInternetGateway
+
+  ShuffleSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ShuffleVPC
+      CidrBlock: !Ref SubnetCIDR
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select 
+        - 0
+        - !GetAZs ''
+      Tags:
+        - Key: Name
+          Value: !Sub '${DeploymentName}-subnet'
+
+  ShuffleRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ShuffleVPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${DeploymentName}-rt'
+
+  ShuffleRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref ShuffleRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref ShuffleInternetGateway
+
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ShuffleSubnet
+      RouteTableId: !Ref ShuffleRouteTable
+
+  # ==================== Security Groups ====================
+
+  ShuffleInternalSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${DeploymentName}-internal-sg'
+      GroupDescription: Internal communication for Shuffle Docker Swarm cluster
+      VpcId: !Ref ShuffleVPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${DeploymentName}-internal-sg'
+
+  # Docker Swarm Internal Rules
+  SwarmTCPIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ShuffleInternalSG
+      IpProtocol: tcp
+      FromPort: 2376
+      ToPort: 2377
+      SourceSecurityGroupId: !Ref ShuffleInternalSG
+      Description: Docker Swarm management
+
+  SwarmTCPIngress2:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ShuffleInternalSG
+      IpProtocol: tcp
+      FromPort: 7946
+      ToPort: 7946
+      SourceSecurityGroupId: !Ref ShuffleInternalSG
+      Description: Docker Swarm node communication
+
+  SwarmUDPIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ShuffleInternalSG
+      IpProtocol: udp
+      FromPort: 7946
+      ToPort: 7946
+      SourceSecurityGroupId: !Ref ShuffleInternalSG
+      Description: Docker Swarm node communication
+
+  SwarmUDPIngress2:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ShuffleInternalSG
+      IpProtocol: udp
+      FromPort: 4789
+      ToPort: 4789
+      SourceSecurityGroupId: !Ref ShuffleInternalSG
+      Description: Docker overlay network
+
+  # NFS for shared storage
+  NFSTCPIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ShuffleInternalSG
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref ShuffleInternalSG
+      Description: NFS
+
+  NFSTCPIngress2:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ShuffleInternalSG
+      IpProtocol: tcp
+      FromPort: 111
+      ToPort: 111
+      SourceSecurityGroupId: !Ref ShuffleInternalSG
+      Description: NFS portmapper
+
+  NFSTCPIngress3:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ShuffleInternalSG
+      IpProtocol: tcp
+      FromPort: 32769
+      ToPort: 32769
+      SourceSecurityGroupId: !Ref ShuffleInternalSG
+      Description: NFS mountd
+
+  NFSUDPIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ShuffleInternalSG
+      IpProtocol: udp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref ShuffleInternalSG
+      Description: NFS
+
+  NFSUDPIngress2:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ShuffleInternalSG
+      IpProtocol: udp
+      FromPort: 111
+      ToPort: 111
+      SourceSecurityGroupId: !Ref ShuffleInternalSG
+      Description: NFS portmapper
+
+  # Internal Shuffle services
+  OpenSearchIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ShuffleInternalSG
+      IpProtocol: tcp
+      FromPort: 9200
+      ToPort: 9300
+      SourceSecurityGroupId: !Ref ShuffleInternalSG
+      Description: OpenSearch
+
+  BackendIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ShuffleInternalSG
+      IpProtocol: tcp
+      FromPort: 5001
+      ToPort: 5002
+      SourceSecurityGroupId: !Ref ShuffleInternalSG
+      Description: Shuffle backend
+
+  WorkerIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ShuffleInternalSG
+      IpProtocol: tcp
+      FromPort: 33333
+      ToPort: 33336
+      SourceSecurityGroupId: !Ref ShuffleInternalSG
+      Description: Shuffle workers
+
+  MemcachedIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ShuffleInternalSG
+      IpProtocol: tcp
+      FromPort: 11211
+      ToPort: 11211
+      SourceSecurityGroupId: !Ref ShuffleInternalSG
+      Description: Memcached
+
+  ShuffleExternalSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${DeploymentName}-external-sg'
+      GroupDescription: External access to Shuffle UI
+      VpcId: !Ref ShuffleVPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${DeploymentName}-external-sg'
+
+  # External access to Shuffle UI (port 3001)
+  ExternalHTTPIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ShuffleExternalSG
+      IpProtocol: tcp
+      FromPort: 3001
+      ToPort: 3001
+      CidrIp: !Select [0, !Ref ExternalAccessCIDRs]
+      Description: Shuffle UI access
+
+  # SSH Security Group (conditional)
+  ShuffleSSHSG:
+    Type: AWS::EC2::SecurityGroup
+    Condition: EnableSSHAccess
+    Properties:
+      GroupName: !Sub '${DeploymentName}-ssh-sg'
+      GroupDescription: SSH access to Shuffle nodes
+      VpcId: !Ref ShuffleVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Select [0, !Ref SSHAccessCIDRs]
+          Description: SSH access
+      Tags:
+        - Key: Name
+          Value: !Sub '${DeploymentName}-ssh-sg'
+
+  # ==================== IAM Role ====================
+
+  ShuffleInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${DeploymentName}-instance-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ShuffleEC2Permissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeTags
+                  - ec2:DescribeNetworkInterfaces
+                  - autoscaling:DescribeAutoScalingGroups
+                  - autoscaling:DescribeAutoScalingInstances
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/shuffle/*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${DeploymentName}-instance-role'
+
+  ShuffleInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${DeploymentName}-instance-profile'
+      Roles:
+        - !Ref ShuffleInstanceRole
+
+  # ==================== Launch Template ====================
+
+  ShuffleLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub '${DeploymentName}-launch-template'
+      LaunchTemplateData:
+        ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Arn: !GetAtt ShuffleInstanceProfile.Arn
+        BlockDeviceMappings:
+          - DeviceName: /dev/sda1
+            Ebs:
+              VolumeSize: !Ref VolumeSize
+              VolumeType: !Ref VolumeType
+              DeleteOnTermination: true
+              Encrypted: true
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: true
+            Groups:
+              - !Ref ShuffleInternalSG
+              - !Ref ShuffleExternalSG
+              - !If [EnableSSHAccess, !Ref ShuffleSSHSG, !Ref 'AWS::NoValue']
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub '${DeploymentName}-node'
+              - Key: Environment
+                Value: !Ref Environment
+              - Key: Application
+                Value: Shuffle
+              - Key: DeploymentName
+                Value: !Ref DeploymentName
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                #!/bin/bash
+                set -euo pipefail
+
+                echo "Starting Shuffle node initialization..."
+                
+                # Export metadata for scripts
+                export DEPLOYMENT_NAME="${DeploymentName}"
+                export TOTAL_NODES=${TotalNodes}
+                export AWS_REGION="${AwsRegion}"
+                export VPC_CIDR="${VpcCidr}"
+                export SUBNET_CIDR="${SubnetCidr}"
+                export SHUFFLE_DEFAULT_USERNAME="${Username}"
+                export SHUFFLE_DEFAULT_PASSWORD="${Password}"
+                
+                # Wait for cloud-init
+                cloud-init status --wait || true
+                
+                # Disable unattended-upgrades during bootstrap
+                systemctl stop unattended-upgrades apt-daily apt-daily-upgrade || true
+                systemctl disable unattended-upgrades apt-daily apt-daily-upgrade || true
+                
+                # Wait for dpkg locks
+                for i in {1..120}; do
+                  if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && \
+                     ! fuser /var/lib/apt/lists/lock >/dev/null 2>&1 && \
+                     ! fuser /var/lib/dpkg/lock >/dev/null 2>&1; then
+                    echo "dpkg is free"
+                    break
+                  fi
+                  if [[ $i -eq 120 ]]; then
+                    echo "dpkg locks still held after waiting"
+                    exit 1
+                  fi
+                  sleep 5
+                done
+                
+                # Update and install dependencies
+                apt-get update
+                apt-get install -y \
+                    ca-certificates \
+                    curl \
+                    gnupg \
+                    lsb-release \
+                    nfs-common \
+                    nfs-kernel-server \
+                    jq \
+                    netcat-openbsd \
+                    awscli
+                
+                # Install Docker
+                if ! command -v docker &> /dev/null; then
+                  echo "Installing Docker..."
+                  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+                  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+                  apt-get update
+                  apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+                  systemctl enable docker
+                  systemctl start docker
+                fi
+                
+                # Setup directories
+                mkdir -p /opt/shuffle
+                mkdir -p /opt/shuffle/shuffle-database
+                chown 1000:1000 /opt/shuffle/shuffle-database
+                chmod 755 /opt/shuffle/shuffle-database
+                
+                # Get instance metadata
+                INSTANCE_ID=$(ec2-metadata --instance-id | cut -d " " -f 2)
+                LOCAL_IP=$(ec2-metadata --local-ipv4 | cut -d " " -f 2)
+                AZ=$(ec2-metadata --availability-zone | cut -d " " -f 2)
+                
+                # Determine if this is the primary manager (first instance launched)
+                ASG_NAME="${DeploymentName}-asg"
+                INSTANCES=$(aws autoscaling describe-auto-scaling-groups \
+                  --auto-scaling-group-names $ASG_NAME \
+                  --region ${AwsRegion} \
+                  --query 'AutoScalingGroups[0].Instances[?HealthStatus==`Healthy`].InstanceId' \
+                  --output text | tr '\t' '\n' | sort)
+                
+                FIRST_INSTANCE=$(echo "$INSTANCES" | head -n1)
+                IS_PRIMARY="false"
+                if [[ "$INSTANCE_ID" == "$FIRST_INSTANCE" ]]; then
+                  IS_PRIMARY="true"
+                fi
+                
+                echo "Instance Configuration:"
+                echo "  Instance ID: $INSTANCE_ID"
+                echo "  Local IP: $LOCAL_IP"
+                echo "  Availability Zone: $AZ"
+                echo "  Is Primary: $IS_PRIMARY"
+                echo "  Total Nodes: $TOTAL_NODES"
+                
+                cd /opt/shuffle
+                
+                # Create environment file
+                cat > .env << 'ENVEOF'
+                ORG_ID=Shuffle
+                ENVIRONMENT_NAME=Shuffle
+                LIQUID_SANITIZE_INPUT=true
+                SHUFFLE_APP_DOWNLOAD_LOCATION=https://github.com/shuffle/python-apps
+                SHUFFLE_APP_FORCE_UPDATE=false
+                SHUFFLE_DEFAULT_USERNAME=${!SHUFFLE_DEFAULT_USERNAME}
+                SHUFFLE_DEFAULT_PASSWORD=${!SHUFFLE_DEFAULT_PASSWORD}
+                SHUFFLE_APP_HOTLOAD_FOLDER=/shuffle-apps
+                SHUFFLE_APP_HOTLOAD_LOCATION=/shuffle-apps
+                SHUFFLE_FILE_LOCATION=/shuffle-files
+                FRONTEND_PORT=3001
+                FRONTEND_PORT_HTTPS=3443
+                BACKEND_HOSTNAME=shuffle_backend
+                ENVIRONMENT_NAME=Shuffle
+                DOCKER_API_VERSION=1.44
+                SHUFFLE_ORBORUS_EXECUTION_CONCURRENCY=5
+                SHUFFLE_PASS_WORKER_PROXY=TRUE
+                SHUFFLE_PASS_APP_PROXY=TRUE
+                SHUFFLE_LOGS_DISABLED=false
+                TZ=UTC
+                SHUFFLE_OPENSEARCH_PASSWORD="StrongShufflePassword321!"
+                SHUFFLE_OPENSEARCH_URL=http://tasks.opensearch:9200
+                SHUFFLE_ENCRYPTION_MODIFIER=${!SHUFFLE_ENCRYPTION_KEY}
+                BASE_URL=http://shuffle_backend:5001
+                SSO_REDIRECT_URL=http://localhost:3001
+                BACKEND_PORT=5001
+                OUTER_HOSTNAME=shuffle_backend
+                DB_LOCATION=/usr/share/opensearch/data
+                SHUFFLE_INTERNAL_HTTP_PROXY=noproxy
+                SHUFFLE_INTERNAL_HTTPS_PROXY=noproxy
+                SHUFFLE_ORBORUS_STARTUP_DELAY=0
+                SHUFFLE_SKIPSSL_VERIFY=true
+                IS_KUBERNETES=false
+                SHUFFLE_USE_GCHR_OVERRIDE_FOR_AUTODEPLOY=true
+                SHUFFLE_SWARM_BRIDGE_DEFAULT_INTERFACE=eth0
+                SHUFFLE_SWARM_BRIDGE_DEFAULT_MTU=1500
+                SHUFFLE_MEMCACHED=memcached:11211,
+                SHUFFLE_CONTAINER_AUTO_CLEANUP=true
+                SHUFFLE_HEALTHCHECK_DISABLED=false
+                ENVEOF
+                
+                # Download deployment scripts from GitHub
+                echo "Downloading Shuffle deployment scripts..."
+                curl -fsSL https://raw.githubusercontent.com/Shuffle/gcp-marketplace/master/config/swarm.yaml -o /opt/shuffle/swarm.yaml
+                curl -fsSL https://raw.githubusercontent.com/Shuffle/gcp-marketplace/master/config/deploy.sh -o /opt/shuffle/deploy.sh
+                curl -fsSL https://raw.githubusercontent.com/Shuffle/gcp-marketplace/master/config/setup-nfs-server.sh -o /opt/shuffle/setup-nfs-server.sh
+                curl -fsSL https://raw.githubusercontent.com/Shuffle/gcp-marketplace/master/config/nginx-main.conf -o /opt/shuffle/nginx-main.conf
+                
+                chmod +x deploy.sh setup-nfs-server.sh
+                
+                if [[ "$IS_PRIMARY" == "true" ]] || [[ "$TOTAL_NODES" == "1" ]]; then
+                  echo "Initializing primary manager node..."
+                  
+                  # Initialize Docker Swarm
+                  docker swarm init --advertise-addr $LOCAL_IP
+                  
+                  # Deploy Shuffle stack
+                  bash deploy.sh
+                  
+                  echo "Shuffle deployment completed on primary manager"
+                else
+                  echo "Waiting for primary manager to initialize..."
+                  
+                  # Wait for primary manager and join swarm
+                  PRIMARY_IP=""
+                  for i in {1..60}; do
+                    PRIMARY_IP=$(aws ec2 describe-instances \
+                      --instance-ids $FIRST_INSTANCE \
+                      --region ${AwsRegion} \
+                      --query 'Reservations[0].Instances[0].PrivateIpAddress' \
+                      --output text)
+                    
+                    if [[ -n "$PRIMARY_IP" ]] && [[ "$PRIMARY_IP" != "None" ]]; then
+                      break
+                    fi
+                    sleep 10
+                  done
+                  
+                  if [[ -z "$PRIMARY_IP" ]]; then
+                    echo "Failed to get primary manager IP"
+                    exit 1
+                  fi
+                  
+                  echo "Primary manager IP: $PRIMARY_IP"
+                  
+                  # Try to join swarm
+                  for i in {1..60}; do
+                    # Use SSM or direct connection to get join token
+                    # For now, we'll attempt to join as manager
+                    JOIN_TOKEN=$(aws ssm get-parameter \
+                      --name "/${DeploymentName}/swarm-manager-token" \
+                      --region ${AwsRegion} \
+                      --query 'Parameter.Value' \
+                      --output text 2>/dev/null || echo "")
+                    
+                    if [[ -n "$JOIN_TOKEN" ]]; then
+                      docker swarm join --token $JOIN_TOKEN $PRIMARY_IP:2377 && break
+                    fi
+                    
+                    sleep 10
+                  done
+                  
+                  echo "Joined swarm as manager"
+                fi
+                
+                echo "Shuffle node initialization completed"
+              - TotalNodes: !Sub '${NodeCount}'
+                AwsRegion: !Ref AWS::Region
+                DeploymentName: !Ref DeploymentName
+                VpcCidr: !Ref VpcCIDR
+                SubnetCidr: !Ref SubnetCIDR
+                Username: !Ref DefaultUsername
+                Password: !Ref DefaultPassword
+
+  # ==================== Auto Scaling Group ====================
+
+  ShuffleASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub '${DeploymentName}-asg'
+      VPCZoneIdentifier:
+        - !Ref ShuffleSubnet
+      LaunchTemplate:
+        LaunchTemplateId: !Ref ShuffleLaunchTemplate
+        Version: !GetAtt ShuffleLaunchTemplate.LatestVersionNumber
+      MinSize: !Ref NodeCount
+      MaxSize: !Ref NodeCount
+      DesiredCapacity: !Ref NodeCount
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 600
+      Tags:
+        - Key: Name
+          Value: !Sub '${DeploymentName}-node'
+          PropagateAtLaunch: true
+        - Key: Environment
+          Value: !Ref Environment
+          PropagateAtLaunch: true
+
+  # ==================== CloudWatch Log Group ====================
+
+  ShuffleLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/shuffle/${DeploymentName}'
+      RetentionInDays: 7
+
+Outputs:
+  VPCId:
+    Description: VPC ID
+    Value: !Ref ShuffleVPC
+    Export:
+      Name: !Sub '${DeploymentName}-vpc-id'
+
+  SubnetId:
+    Description: Subnet ID
+    Value: !Ref ShuffleSubnet
+    Export:
+      Name: !Sub '${DeploymentName}-subnet-id'
+
+  SecurityGroupInternal:
+    Description: Internal Security Group ID
+    Value: !Ref ShuffleInternalSG
+    Export:
+      Name: !Sub '${DeploymentName}-internal-sg-id'
+
+  SecurityGroupExternal:
+    Description: External Security Group ID
+    Value: !Ref ShuffleExternalSG
+    Export:
+      Name: !Sub '${DeploymentName}-external-sg-id'
+
+  AutoScalingGroupName:
+    Description: Auto Scaling Group Name
+    Value: !Ref ShuffleASG
+
+  DeploymentName:
+    Description: Deployment Name
+    Value: !Ref DeploymentName
+
+  ShuffleFrontendURL:
+    Description: URL to access Shuffle Frontend (replace INSTANCE_IP with actual instance public IP)
+    Value: !Sub 'http://INSTANCE_IP:3001'
+
+  PostDeploymentInstructions:
+    Description: Instructions after deployment
+    Value: !Join
+      - ''
+      - - |
+          =================================================================
+          Shuffle Deployment In Progress!
+          =================================================================
+          
+          The Shuffle cluster is being deployed with 
+        - !Ref NodeCount
+        - !Sub |2
+           node(s).
+          
+          To access Shuffle:
+          1. Wait 5-10 minutes for instances to initialize
+          2. Get the public IP of any instance from EC2 console
+          3. Access: http://INSTANCE_IP:3001
+          
+          To manage the cluster:
+          - View running services: docker stack services shuffle
+          - View logs: docker service logs shuffle_<service-name>
+          - Check swarm status: docker node ls
+          
+          Security:
+          - Only port 3001 is exposed externally
+          - All internal services use VPC-internal communication
+          
+          =================================================================
