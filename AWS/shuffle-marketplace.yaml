@@ -25,13 +25,9 @@ Metadata:
           - VpcCIDR
           - SubnetCIDR
           - ExternalAccessCIDRs
-          - SSHAccessCIDRs
           - EnableSSH
-      - Label:
-          default: "Shuffle Configuration"
-        Parameters:
-          - DefaultUsername
-          - DefaultPassword
+          - SSHKeyName
+          - SSHAccessCIDRs
     ParameterLabels:
       DeploymentName:
         default: "Deployment Name"
@@ -132,27 +128,20 @@ Parameters:
     Description: Comma-separated list of CIDR blocks allowed SSH access (if enabled)
     Default: 0.0.0.0/0
 
-  DefaultUsername:
+  SSHKeyName:
     Type: String
-    Description: Default admin username for Shuffle (minimum 3 characters, leave empty to set on first login)
+    Description: EC2 Key Pair name for SSH access (must exist in your AWS account). Required if EnableSSH is true.
     Default: ''
-    NoEcho: false
 
-  DefaultPassword:
-    Type: String
-    Description: Default admin password for Shuffle (minimum 3 characters, leave empty to set on first login)
-    Default: ''
-    NoEcho: true
 
 Conditions:
-  EnableSSHAccess: !Equals [!Ref EnableSSH, 'true']
+  EnableSSHAccess: !And
+    - !Equals [!Ref EnableSSH, 'true']
+    - !Not [!Equals [!Ref SSHKeyName, '']]
   MultiNode: !Not [!Equals [!Ref NodeCount, 1]]
-  UseDefaultUsername: !Not [!Equals [!Ref DefaultUsername, '']]
-  UseDefaultPassword: !Not [!Equals [!Ref DefaultPassword, '']]
 
 Mappings:
   # Ubuntu 22.04 LTS AMI IDs by region
-  # Note: Replace these with your custom Shuffle AMI IDs for AWS Marketplace
   RegionMap:
     us-east-1:
       AMI: ami-0c7217cdde317cfec  # Ubuntu 22.04 LTS
@@ -468,6 +457,12 @@ Resources:
                   - logs:PutLogEvents
                   - logs:DescribeLogStreams
                 Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/shuffle/*'
+              - Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                  - ssm:GetParameter
+                  - ssm:DeleteParameter
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${DeploymentName}/*'
       Tags:
         - Key: Name
           Value: !Sub '${DeploymentName}-instance-role'
@@ -479,8 +474,6 @@ Resources:
       Roles:
         - !Ref ShuffleInstanceRole
 
-  # ==================== Launch Template ====================
-
   ShuffleLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
@@ -488,6 +481,7 @@ Resources:
       LaunchTemplateData:
         ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
         InstanceType: !Ref InstanceType
+        KeyName: !If [EnableSSHAccess, !Ref SSHKeyName, !Ref 'AWS::NoValue']
         IamInstanceProfile:
           Arn: !GetAtt ShuffleInstanceProfile.Arn
         BlockDeviceMappings:
@@ -521,213 +515,124 @@ Resources:
               - |
                 #!/bin/bash
                 set -euo pipefail
-
+                exec > >(tee /var/log/shuffle-startup.log) 2>&1
+                
                 echo "Starting Shuffle node initialization..."
                 
-                # Export metadata for scripts
+                # Configuration from CloudFormation
                 export DEPLOYMENT_NAME="${DeploymentName}"
-                export TOTAL_NODES=${TotalNodes}
+                export TOTAL_NODES="${TotalNodes}"
                 export AWS_REGION="${AwsRegion}"
-                export VPC_CIDR="${VpcCidr}"
-                export SUBNET_CIDR="${SubnetCidr}"
-                export SHUFFLE_DEFAULT_USERNAME="${Username}"
-                export SHUFFLE_DEFAULT_PASSWORD="${Password}"
                 
-                # Wait for cloud-init
+                # Get EC2 instance metadata
+                get_instance_metadata() {
+                  local path="$1"
+                  TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || echo "")
+                  if [[ -n "$TOKEN" ]]; then
+                    curl -H "X-aws-ec2-metadata-token: $TOKEN" "http://169.254.169.254/latest/meta-data/$path" 2>/dev/null || echo ""
+                  else
+                    curl "http://169.254.169.254/latest/meta-data/$path" 2>/dev/null || echo ""
+                  fi
+                }
+                
+                INSTANCE_ID=$(get_instance_metadata "instance-id")
+                LOCAL_IP=$(get_instance_metadata "local-ipv4")
+                
+                echo "Instance ID: $INSTANCE_ID, IP: $LOCAL_IP"
+                
+                # Wait for cloud-init and disable unattended-upgrades
                 cloud-init status --wait || true
-                
-                # Disable unattended-upgrades during bootstrap
                 systemctl stop unattended-upgrades apt-daily apt-daily-upgrade || true
                 systemctl disable unattended-upgrades apt-daily apt-daily-upgrade || true
                 
                 # Wait for dpkg locks
                 for i in {1..120}; do
-                  if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && \
-                     ! fuser /var/lib/apt/lists/lock >/dev/null 2>&1 && \
-                     ! fuser /var/lib/dpkg/lock >/dev/null 2>&1; then
-                    echo "dpkg is free"
+                  if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && ! fuser /var/lib/apt/lists/lock >/dev/null 2>&1; then
                     break
-                  fi
-                  if [[ $i -eq 120 ]]; then
-                    echo "dpkg locks still held after waiting"
-                    exit 1
                   fi
                   sleep 5
                 done
                 
-                # Update and install dependencies
-                apt-get update
-                apt-get install -y \
-                    ca-certificates \
-                    curl \
-                    gnupg \
-                    lsb-release \
-                    nfs-common \
-                    nfs-kernel-server \
-                    jq \
-                    netcat-openbsd \
-                    awscli
+                # Install dependencies
+                APT_OPTS="-o DPkg::Lock::Timeout=600 -o Dpkg::Use-Pty=0"
+                apt-get $APT_OPTS update
+                apt-get $APT_OPTS install -y ca-certificates curl gnupg lsb-release nfs-common nfs-kernel-server jq netcat-openbsd awscli
                 
                 # Install Docker
                 if ! command -v docker &> /dev/null; then
-                  echo "Installing Docker..."
                   curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-                  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-                  apt-get update
-                  apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+                  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
+                  apt-get $APT_OPTS update
+                  apt-get $APT_OPTS install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
                   systemctl enable docker
                   systemctl start docker
                 fi
                 
                 # Setup directories
-                mkdir -p /opt/shuffle
                 mkdir -p /opt/shuffle/shuffle-database
                 chown 1000:1000 /opt/shuffle/shuffle-database
                 chmod 755 /opt/shuffle/shuffle-database
                 
-                # Get instance metadata
-                INSTANCE_ID=$(ec2-metadata --instance-id | cut -d " " -f 2)
-                LOCAL_IP=$(ec2-metadata --local-ipv4 | cut -d " " -f 2)
-                AZ=$(ec2-metadata --availability-zone | cut -d " " -f 2)
-                
-                # Determine if this is the primary manager (first instance launched)
+                # Determine if primary node
                 ASG_NAME="${DeploymentName}-asg"
-                INSTANCES=$(aws autoscaling describe-auto-scaling-groups \
-                  --auto-scaling-group-names $ASG_NAME \
-                  --region ${AwsRegion} \
-                  --query 'AutoScalingGroups[0].Instances[?HealthStatus==`Healthy`].InstanceId' \
-                  --output text | tr '\t' '\n' | sort)
-                
-                FIRST_INSTANCE=$(echo "$INSTANCES" | head -n1)
                 IS_PRIMARY="false"
-                if [[ "$INSTANCE_ID" == "$FIRST_INSTANCE" ]]; then
-                  IS_PRIMARY="true"
-                fi
-                
-                echo "Instance Configuration:"
-                echo "  Instance ID: $INSTANCE_ID"
-                echo "  Local IP: $LOCAL_IP"
-                echo "  Availability Zone: $AZ"
-                echo "  Is Primary: $IS_PRIMARY"
-                echo "  Total Nodes: $TOTAL_NODES"
+                for i in {1..30}; do
+                  INSTANCES=$(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$ASG_NAME" --region "$AWS_REGION" --query 'AutoScalingGroups[0].Instances[?HealthStatus==`Healthy`].InstanceId' --output text 2>/dev/null | tr '\t' '\n' | sort || echo "")
+                  if [[ -n "$INSTANCES" ]]; then
+                    FIRST_INSTANCE=$(echo "$INSTANCES" | head -n1)
+                    [[ "$INSTANCE_ID" == "$FIRST_INSTANCE" ]] && IS_PRIMARY="true"
+                    break
+                  fi
+                  sleep 10
+                done
+                [[ "$TOTAL_NODES" == "1" ]] && IS_PRIMARY="true"
                 
                 cd /opt/shuffle
                 
-                # Create environment file
-                cat > .env << 'ENVEOF'
-                ORG_ID=Shuffle
-                ENVIRONMENT_NAME=Shuffle
-                LIQUID_SANITIZE_INPUT=true
-                SHUFFLE_APP_DOWNLOAD_LOCATION=https://github.com/shuffle/python-apps
-                SHUFFLE_APP_FORCE_UPDATE=false
-                SHUFFLE_DEFAULT_USERNAME=${!SHUFFLE_DEFAULT_USERNAME}
-                SHUFFLE_DEFAULT_PASSWORD=${!SHUFFLE_DEFAULT_PASSWORD}
-                SHUFFLE_APP_HOTLOAD_FOLDER=/shuffle-apps
-                SHUFFLE_APP_HOTLOAD_LOCATION=/shuffle-apps
-                SHUFFLE_FILE_LOCATION=/shuffle-files
-                FRONTEND_PORT=3001
-                FRONTEND_PORT_HTTPS=3443
-                BACKEND_HOSTNAME=shuffle_backend
-                ENVIRONMENT_NAME=Shuffle
-                DOCKER_API_VERSION=1.44
-                SHUFFLE_ORBORUS_EXECUTION_CONCURRENCY=5
-                SHUFFLE_PASS_WORKER_PROXY=TRUE
-                SHUFFLE_PASS_APP_PROXY=TRUE
-                SHUFFLE_LOGS_DISABLED=false
-                TZ=UTC
-                SHUFFLE_OPENSEARCH_PASSWORD="StrongShufflePassword321!"
-                SHUFFLE_OPENSEARCH_URL=http://tasks.opensearch:9200
-                SHUFFLE_ENCRYPTION_MODIFIER=${!SHUFFLE_ENCRYPTION_KEY}
-                BASE_URL=http://shuffle_backend:5001
-                SSO_REDIRECT_URL=http://localhost:3001
-                BACKEND_PORT=5001
-                OUTER_HOSTNAME=shuffle_backend
-                DB_LOCATION=/usr/share/opensearch/data
-                SHUFFLE_INTERNAL_HTTP_PROXY=noproxy
-                SHUFFLE_INTERNAL_HTTPS_PROXY=noproxy
-                SHUFFLE_ORBORUS_STARTUP_DELAY=0
-                SHUFFLE_SKIPSSL_VERIFY=true
-                IS_KUBERNETES=false
-                SHUFFLE_USE_GCHR_OVERRIDE_FOR_AUTODEPLOY=true
-                SHUFFLE_SWARM_BRIDGE_DEFAULT_INTERFACE=eth0
-                SHUFFLE_SWARM_BRIDGE_DEFAULT_MTU=1500
-                SHUFFLE_MEMCACHED=memcached:11211,
-                SHUFFLE_CONTAINER_AUTO_CLEANUP=true
-                SHUFFLE_HEALTHCHECK_DISABLED=false
-                ENVEOF
+                # Download config files from GitHub
+                REPO_BASE="https://raw.githubusercontent.com/Shuffle/gcp-marketplace/master/GCP"
+                curl -fsSL "$REPO_BASE/config/swarm.yaml" -o swarm.yaml
+                curl -fsSL "$REPO_BASE/config/deploy.sh" -o deploy.sh
+                curl -fsSL "$REPO_BASE/config/setup-nfs-server.sh" -o setup-nfs-server.sh
+                curl -fsSL "$REPO_BASE/config/nginx-main.conf" -o nginx-main.conf
+                curl -fsSL "$REPO_BASE/config/.env" -o .env
+                curl -fsSL "$REPO_BASE/scripts/monitor-db-permissions.sh" -o monitor-db-permissions.sh
+                chmod +x deploy.sh setup-nfs-server.sh monitor-db-permissions.sh
+
                 
-                # Download deployment scripts from GitHub
-                echo "Downloading Shuffle deployment scripts..."
-                curl -fsSL https://raw.githubusercontent.com/Shuffle/gcp-marketplace/master/config/swarm.yaml -o /opt/shuffle/swarm.yaml
-                curl -fsSL https://raw.githubusercontent.com/Shuffle/gcp-marketplace/master/config/deploy.sh -o /opt/shuffle/deploy.sh
-                curl -fsSL https://raw.githubusercontent.com/Shuffle/gcp-marketplace/master/config/setup-nfs-server.sh -o /opt/shuffle/setup-nfs-server.sh
-                curl -fsSL https://raw.githubusercontent.com/Shuffle/gcp-marketplace/master/config/nginx-main.conf -o /opt/shuffle/nginx-main.conf
-                
-                chmod +x deploy.sh setup-nfs-server.sh
-                
-                if [[ "$IS_PRIMARY" == "true" ]] || [[ "$TOTAL_NODES" == "1" ]]; then
-                  echo "Initializing primary manager node..."
-                  
-                  # Initialize Docker Swarm
+                if [[ "$IS_PRIMARY" == "true" ]]; then
                   docker swarm init --advertise-addr $LOCAL_IP
+                  MANAGER_TOKEN=$(docker swarm join-token manager -q)
+                  aws ssm put-parameter --name "/$DEPLOYMENT_NAME/swarm-manager-token" --value "$MANAGER_TOKEN" --type "SecureString" --region "$AWS_REGION" --overwrite || true
+                  aws ssm put-parameter --name "/$DEPLOYMENT_NAME/primary-manager-ip" --value "$LOCAL_IP" --type "String" --region "$AWS_REGION" --overwrite || true
                   
-                  # Deploy Shuffle stack
+                  # Wait for all nodes to join
+                  for i in {1..300}; do
+                    CURRENT_COUNT=$(docker node ls --format "{{.ID}}" | wc -l)
+                    [[ "$CURRENT_COUNT" -eq "$TOTAL_NODES" ]] && break
+                    sleep 10
+                  done
+                  sleep 30
                   bash deploy.sh
-                  
-                  echo "Shuffle deployment completed on primary manager"
                 else
-                  echo "Waiting for primary manager to initialize..."
-                  
-                  # Wait for primary manager and join swarm
-                  PRIMARY_IP=""
+                  # Secondary node - join swarm
                   for i in {1..60}; do
-                    PRIMARY_IP=$(aws ec2 describe-instances \
-                      --instance-ids $FIRST_INSTANCE \
-                      --region ${AwsRegion} \
-                      --query 'Reservations[0].Instances[0].PrivateIpAddress' \
-                      --output text)
-                    
-                    if [[ -n "$PRIMARY_IP" ]] && [[ "$PRIMARY_IP" != "None" ]]; then
-                      break
+                    PRIMARY_IP=$(aws ssm get-parameter --name "/$DEPLOYMENT_NAME/primary-manager-ip" --region "$AWS_REGION" --query 'Parameter.Value' --output text 2>/dev/null || echo "")
+                    if [[ -n "$PRIMARY_IP" ]] && nc -z -w5 $PRIMARY_IP 2377 2>/dev/null; then
+                      MANAGER_TOKEN=$(aws ssm get-parameter --name "/$DEPLOYMENT_NAME/swarm-manager-token" --region "$AWS_REGION" --query 'Parameter.Value' --output text --with-decryption 2>/dev/null || echo "")
+                      if [[ -n "$MANAGER_TOKEN" ]]; then
+                        docker swarm join --token "$MANAGER_TOKEN" "$PRIMARY_IP:2377" && break
+                      fi
                     fi
                     sleep 10
                   done
-                  
-                  if [[ -z "$PRIMARY_IP" ]]; then
-                    echo "Failed to get primary manager IP"
-                    exit 1
-                  fi
-                  
-                  echo "Primary manager IP: $PRIMARY_IP"
-                  
-                  # Try to join swarm
-                  for i in {1..60}; do
-                    # Use SSM or direct connection to get join token
-                    # For now, we'll attempt to join as manager
-                    JOIN_TOKEN=$(aws ssm get-parameter \
-                      --name "/${DeploymentName}/swarm-manager-token" \
-                      --region ${AwsRegion} \
-                      --query 'Parameter.Value' \
-                      --output text 2>/dev/null || echo "")
-                    
-                    if [[ -n "$JOIN_TOKEN" ]]; then
-                      docker swarm join --token $JOIN_TOKEN $PRIMARY_IP:2377 && break
-                    fi
-                    
-                    sleep 10
-                  done
-                  
-                  echo "Joined swarm as manager"
                 fi
                 
-                echo "Shuffle node initialization completed"
-              - TotalNodes: !Sub '${NodeCount}'
+                nohup /opt/shuffle/monitor-db-permissions.sh > /var/log/shuffle-db-monitor.log 2>&1 &
+                echo "Shuffle initialization complete!"
+              - TotalNodes: !Ref NodeCount
                 AwsRegion: !Ref AWS::Region
                 DeploymentName: !Ref DeploymentName
-                VpcCidr: !Ref VpcCIDR
-                SubnetCidr: !Ref SubnetCIDR
-                Username: !Ref DefaultUsername
-                Password: !Ref DefaultPassword
 
   # ==================== Auto Scaling Group ====================
 

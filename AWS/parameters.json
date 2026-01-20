@@ -44,11 +44,7 @@
     "ParameterValue": "0.0.0.0/0"
   },
   {
-    "ParameterKey": "DefaultUsername",
-    "ParameterValue": "lalitdeore"
-  },
-  {
-    "ParameterKey": "DefaultPassword",
-    "ParameterValue": "lalitdeore"
+    "ParameterKey": "SSHKeyName",
+    "ParameterValue": "shuffle-aws-keypair"
   }
 ]
