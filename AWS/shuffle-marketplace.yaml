@@ -26,7 +26,6 @@ Metadata:
           - SubnetCIDR
           - ExternalAccessCIDRs
           - EnableSSH
-          - SSHKeyName
           - SSHAccessCIDRs
     ParameterLabels:
       DeploymentName:
@@ -128,16 +127,8 @@ Parameters:
     Description: Comma-separated list of CIDR blocks allowed SSH access (if enabled)
     Default: 0.0.0.0/0
 
-  SSHKeyName:
-    Type: String
-    Description: EC2 Key Pair name for SSH access (must exist in your AWS account). Required if EnableSSH is true.
-    Default: ''
-
-
 Conditions:
-  EnableSSHAccess: !And
-    - !Equals [!Ref EnableSSH, 'true']
-    - !Not [!Equals [!Ref SSHKeyName, '']]
+  EnableSSHAccess: !Equals [!Ref EnableSSH, 'true'] 
   MultiNode: !Not [!Equals [!Ref NodeCount, 1]]
 
 Mappings:
@@ -463,6 +454,20 @@ Resources:
                   - ssm:GetParameter
                   - ssm:DeleteParameter
                 Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${DeploymentName}/*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - 'arn:aws:s3:::shuffler/config/*'
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  - 'arn:aws:s3:::shuffler'
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - 'config/*'
       Tags:
         - Key: Name
           Value: !Sub '${DeploymentName}-instance-role'
@@ -481,7 +486,6 @@ Resources:
       LaunchTemplateData:
         ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
         InstanceType: !Ref InstanceType
-        KeyName: !If [EnableSSHAccess, !Ref SSHKeyName, !Ref 'AWS::NoValue']
         IamInstanceProfile:
           Arn: !GetAtt ShuffleInstanceProfile.Arn
         BlockDeviceMappings:
@@ -540,8 +544,6 @@ Resources:
                 
                 echo "Instance ID: $INSTANCE_ID, IP: $LOCAL_IP"
                 
-                # Wait for cloud-init and disable unattended-upgrades
-                cloud-init status --wait || true
                 systemctl stop unattended-upgrades apt-daily apt-daily-upgrade || true
                 systemctl disable unattended-upgrades apt-daily apt-daily-upgrade || true
                 
@@ -589,15 +591,25 @@ Resources:
                 
                 cd /opt/shuffle
                 
-                # Download config files from GitHub
-                REPO_BASE="https://raw.githubusercontent.com/Shuffle/gcp-marketplace/master/GCP"
-                curl -fsSL "$REPO_BASE/config/swarm.yaml" -o swarm.yaml
-                curl -fsSL "$REPO_BASE/config/deploy.sh" -o deploy.sh
-                curl -fsSL "$REPO_BASE/config/setup-nfs-server.sh" -o setup-nfs-server.sh
-                curl -fsSL "$REPO_BASE/config/nginx-main.conf" -o nginx-main.conf
-                curl -fsSL "$REPO_BASE/config/.env" -o .env
-                curl -fsSL "$REPO_BASE/scripts/monitor-db-permissions.sh" -o monitor-db-permissions.sh
+                # Download config files from S3 bucket
+                echo "Downloading configuration files from S3..."
+                
+                aws s3 cp s3://shuffler/config/swarm.yaml swarm.yaml --region "$AWS_REGION"
+                aws s3 cp s3://shuffler/config/deploy.sh deploy.sh --region "$AWS_REGION"
+                aws s3 cp s3://shuffler/config/setup-nfs-server.sh setup-nfs-server.sh --region "$AWS_REGION"
+                aws s3 cp s3://shuffler/config/nginx-main.conf nginx-main.conf --region "$AWS_REGION"
+                aws s3 cp s3://shuffler/config/.env .env --region "$AWS_REGION"
+                aws s3 cp s3://shuffler/config/monitor-db-permissions.sh monitor-db-permissions.sh --region "$AWS_REGION"
+                
+                # Convert Windows line endings (CRLF) to Unix line endings (LF)
+                echo "Converting line endings to Unix format..."
+                for file in deploy.sh setup-nfs-server.sh monitor-db-permissions.sh; do
+                  sed -i 's/\r$//' "$file" 2>/dev/null || dos2unix "$file" 2>/dev/null || true
+                done
+                
                 chmod +x deploy.sh setup-nfs-server.sh monitor-db-permissions.sh
+                
+                echo "Configuration files downloaded successfully"
 
                 
                 if [[ "$IS_PRIMARY" == "true" ]]; then
