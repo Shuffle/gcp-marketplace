@@ -26,6 +26,7 @@ Metadata:
           - SubnetCIDR
           - ExternalAccessCIDRs
           - EnableSSH
+          - SSHKeyName
           - SSHAccessCIDRs
     ParameterLabels:
       DeploymentName:
@@ -127,8 +128,16 @@ Parameters:
     Description: Comma-separated list of CIDR blocks allowed SSH access (if enabled)
     Default: 0.0.0.0/0
 
+  SSHKeyName:
+    Type: String
+    Description: EC2 Key Pair name for SSH access (must exist in your AWS account). Required if EnableSSH is true.
+    Default: ''
+
+
 Conditions:
-  EnableSSHAccess: !Equals [!Ref EnableSSH, 'true'] 
+  EnableSSHAccess: !And
+    - !Equals [!Ref EnableSSH, 'true']
+    - !Not [!Equals [!Ref SSHKeyName, '']]
   MultiNode: !Not [!Equals [!Ref NodeCount, 1]]
 
 Mappings:
@@ -307,10 +316,10 @@ Resources:
     Properties:
       GroupId: !Ref ShuffleInternalSG
       IpProtocol: tcp
-      FromPort: 32769
-      ToPort: 32769
+      FromPort: 32768
+      ToPort: 65535
       SourceSecurityGroupId: !Ref ShuffleInternalSG
-      Description: NFS mountd
+      Description: NFS auxiliary services (mountd, statd, lockd)
 
   NFSUDPIngress:
     Type: AWS::EC2::SecurityGroupIngress
@@ -331,6 +340,16 @@ Resources:
       ToPort: 111
       SourceSecurityGroupId: !Ref ShuffleInternalSG
       Description: NFS portmapper
+
+  NFSUDPIngress3:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ShuffleInternalSG
+      IpProtocol: udp
+      FromPort: 32768
+      ToPort: 65535
+      SourceSecurityGroupId: !Ref ShuffleInternalSG
+      Description: NFS auxiliary services (mountd, statd, lockd)
 
   # Internal Shuffle services
   OpenSearchIngress:
@@ -486,6 +505,7 @@ Resources:
       LaunchTemplateData:
         ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
         InstanceType: !Ref InstanceType
+        KeyName: !If [EnableSSHAccess, !Ref SSHKeyName, !Ref 'AWS::NoValue']
         IamInstanceProfile:
           Arn: !GetAtt ShuffleInstanceProfile.Arn
         BlockDeviceMappings:
@@ -498,10 +518,13 @@ Resources:
         NetworkInterfaces:
           - DeviceIndex: 0
             AssociatePublicIpAddress: true
-            Groups:
-              - !Ref ShuffleInternalSG
-              - !Ref ShuffleExternalSG
-              - !If [EnableSSHAccess, !Ref ShuffleSSHSG, !Ref 'AWS::NoValue']
+            Groups: !If
+              - EnableSSHAccess
+              - - !Ref ShuffleInternalSG
+                - !Ref ShuffleExternalSG
+                - !Ref ShuffleSSHSG
+              - - !Ref ShuffleInternalSG
+                - !Ref ShuffleExternalSG
         TagSpecifications:
           - ResourceType: instance
             Tags:
