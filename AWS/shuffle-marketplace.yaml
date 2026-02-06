@@ -96,6 +96,16 @@ Parameters:
       - io1  # Provisioned IOPS SSD
       - io2  # Provisioned IOPS SSD
 
+  AmazonLinux2023AMI:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Description: Amazon Linux 2023 AMI (dynamically resolved from SSM Parameter Store)
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+  SSHKeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 Key Pair name for SSH access to instances (if EnableSSH is true)
+    ConstraintDescription: Must be an existing EC2 Key Pair name
+
   VpcCIDR:
     Type: String
     Description: CIDR block for the VPC
@@ -140,38 +150,6 @@ Conditions:
     - !Not [!Equals [!Ref SSHKeyName, '']]
   MultiNode: !Not [!Equals [!Ref NodeCount, 1]]
 
-Mappings:
-  # Ubuntu 22.04 LTS AMI IDs by region
-  RegionMap:
-    us-east-1:
-      AMI: ami-0c7217cdde317cfec  # Ubuntu 22.04 LTS
-    us-east-2:
-      AMI: ami-0a695f0d95cefc163
-    us-west-1:
-      AMI: ami-0ce2cb35386fc22e9
-    us-west-2:
-      AMI: ami-008fe2fc65df48dac
-    eu-west-1:
-      AMI: ami-0905a3c97561e0b69
-    eu-west-2:
-      AMI: ami-0eb260c4d5475b901
-    eu-west-3:
-      AMI: ami-00983e8a26e4c9bd9
-    eu-central-1:
-      AMI: ami-0faab6bdbac9486fb
-    ap-southeast-1:
-      AMI: ami-0df7a207adb9748c7
-    ap-southeast-2:
-      AMI: ami-0310483fb2b488153
-    ap-northeast-1:
-      AMI: ami-0d52744d6551d851e
-    ap-northeast-2:
-      AMI: ami-0c9c942bd7bf113a2
-    sa-east-1:
-      AMI: ami-0af6e9042ea5a4e3e
-    ca-central-1:
-      AMI: ami-0a2e7efb4257c0907
-
 Resources:
   # ==================== VPC and Networking ====================
   
@@ -202,18 +180,50 @@ Resources:
       VpcId: !Ref ShuffleVPC
       InternetGatewayId: !Ref ShuffleInternetGateway
 
-  ShuffleSubnet:
+  ShuffleSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref ShuffleVPC
-      CidrBlock: !Ref SubnetCIDR
+      CidrBlock: !Select [0, !Cidr [!Ref VpcCIDR, 4, 8]]
       MapPublicIpOnLaunch: true
       AvailabilityZone: !Select 
         - 0
         - !GetAZs ''
       Tags:
         - Key: Name
-          Value: !Sub '${DeploymentName}-subnet'
+          Value: !Sub '${DeploymentName}-subnet-az1'
+        - Key: AZ
+          Value: !Select [0, !GetAZs '']
+
+  ShuffleSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ShuffleVPC
+      CidrBlock: !Select [1, !Cidr [!Ref VpcCIDR, 4, 8]]
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select 
+        - 1
+        - !GetAZs ''
+      Tags:
+        - Key: Name
+          Value: !Sub '${DeploymentName}-subnet-az2'
+        - Key: AZ
+          Value: !Select [1, !GetAZs '']
+
+  ShuffleSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ShuffleVPC
+      CidrBlock: !Select [2, !Cidr [!Ref VpcCIDR, 4, 8]]
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select 
+        - 2
+        - !GetAZs ''
+      Tags:
+        - Key: Name
+          Value: !Sub '${DeploymentName}-subnet-az3'
+        - Key: AZ
+          Value: !Select [2, !GetAZs '']
 
   ShuffleRouteTable:
     Type: AWS::EC2::RouteTable
@@ -231,10 +241,22 @@ Resources:
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref ShuffleInternetGateway
 
-  SubnetRouteTableAssociation:
+  SubnetRouteTableAssociation1:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      SubnetId: !Ref ShuffleSubnet
+      SubnetId: !Ref ShuffleSubnet1
+      RouteTableId: !Ref ShuffleRouteTable
+
+  SubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ShuffleSubnet2
+      RouteTableId: !Ref ShuffleRouteTable
+
+  SubnetRouteTableAssociation3:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ShuffleSubnet3
       RouteTableId: !Ref ShuffleRouteTable
 
   # ==================== Security Groups ====================
@@ -431,6 +453,19 @@ Resources:
         - Key: Name
           Value: !Sub '${DeploymentName}-ssh-sg'
 
+  # ==================== EC2 Placement Group ====================
+
+  ShufflePlacementGroup:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      GroupName: !Sub '${DeploymentName}-placement-group'
+      Strategy: spread
+      Tags:
+        - Key: Name
+          Value: !Sub '${DeploymentName}-placement-group'
+        - Key: Application
+          Value: Shuffle
+
   # ==================== IAM Role ====================
 
   ShuffleInstanceRole:
@@ -503,7 +538,8 @@ Resources:
     Properties:
       LaunchTemplateName: !Sub '${DeploymentName}-launch-template'
       LaunchTemplateData:
-        ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
+        # Use dynamic SSM parameter for Amazon Linux 2023 AMI (region-specific)
+        ImageId: !Ref AmazonLinux2023AMI
         InstanceType: !Ref InstanceType
         KeyName: !If [EnableSSHAccess, !Ref SSHKeyName, !Ref 'AWS::NoValue']
         IamInstanceProfile:
@@ -515,6 +551,8 @@ Resources:
               VolumeType: !Ref VolumeType
               DeleteOnTermination: true
               Encrypted: true
+        Placement:
+          GroupName: !Ref ShufflePlacementGroup
         NetworkInterfaces:
           - DeviceIndex: 0
             AssociatePublicIpAddress: true
@@ -544,7 +582,7 @@ Resources:
                 set -euo pipefail
                 exec > >(tee /var/log/shuffle-startup.log) 2>&1
                 
-                echo "Starting Shuffle node initialization..."
+                echo "Starting Shuffle node initialization on Amazon Linux 2023..."
                 
                 # Configuration from CloudFormation
                 export DEPLOYMENT_NAME="${DeploymentName}"
@@ -567,31 +605,32 @@ Resources:
                 
                 echo "Instance ID: $INSTANCE_ID, IP: $LOCAL_IP"
                 
-                systemctl stop unattended-upgrades apt-daily apt-daily-upgrade || true
-                systemctl disable unattended-upgrades apt-daily apt-daily-upgrade || true
+                # Update system packages (Amazon Linux 2023 uses dnf)
+                echo "Updating system packages..."
+                dnf update -y
                 
-                # Wait for dpkg locks
-                for i in {1..120}; do
-                  if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && ! fuser /var/lib/apt/lists/lock >/dev/null 2>&1; then
-                    break
-                  fi
-                  sleep 5
-                done
+                # Install dependencies for Amazon Linux 2023
+                echo "Installing dependencies..."
+                # Use --allowerasing to handle package conflicts
+                dnf install -y --allowerasing ca-certificates curl nfs-utils jq nmap-ncat aws-cli
                 
-                # Install dependencies
-                APT_OPTS="-o DPkg::Lock::Timeout=600 -o Dpkg::Use-Pty=0"
-                apt-get $APT_OPTS update
-                apt-get $APT_OPTS install -y ca-certificates curl gnupg lsb-release nfs-common nfs-kernel-server jq netcat-openbsd awscli
-                
-                # Install Docker
+                # Install Docker CE on Amazon Linux 2023
+                echo "Installing Docker..."
                 if ! command -v docker &> /dev/null; then
-                  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-                  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
-                  apt-get $APT_OPTS update
-                  apt-get $APT_OPTS install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+                  dnf install -y docker
                   systemctl enable docker
                   systemctl start docker
+                  echo "Docker installed successfully"
                 fi
+                
+                # Install Docker Compose (optional, as Docker Swarm is used for orchestration)
+                # Try to install docker-compose package; skip if unavailable
+                if ! docker compose version &> /dev/null; then
+                  dnf install -y docker-compose 2>/dev/null || echo "docker-compose not available in repos; proceeding with Docker Swarm"
+                fi
+                
+                # Add ec2-user to docker group for Docker socket access
+                usermod -aG docker ec2-user
                 
                 # Setup directories
                 mkdir -p /opt/shuffle/shuffle-database
@@ -612,6 +651,7 @@ Resources:
                 done
                 [[ "$TOTAL_NODES" == "1" ]] && IS_PRIMARY="true"
                 
+                mkdir -p /opt/shuffle
                 cd /opt/shuffle
                 
                 # Download config files from S3 bucket
@@ -627,15 +667,39 @@ Resources:
                 # Convert Windows line endings (CRLF) to Unix line endings (LF)
                 echo "Converting line endings to Unix format..."
                 for file in deploy.sh setup-nfs-server.sh monitor-db-permissions.sh; do
-                  sed -i 's/\r$//' "$file" 2>/dev/null || dos2unix "$file" 2>/dev/null || true
+                  sed -i 's/\r$//' "$file" 2>/dev/null || true
                 done
                 
                 chmod +x deploy.sh setup-nfs-server.sh monitor-db-permissions.sh
                 
-                echo "Configuration files downloaded successfully"
+                # Make downloaded scripts compatible with the instance package manager
+                if command -v dnf &> /dev/null; then
+                  echo "Detected DNF-based distro; adjusting downloaded scripts for dnf"
+                  if [ -f setup-nfs-server.sh ]; then
+                    sed -i 's/apt-get/dnf/g' setup-nfs-server.sh 2>/dev/null || true
+                    sed -i 's/apt /dnf /g' setup-nfs-server.sh 2>/dev/null || true
+                    sed -i 's/nfs-kernel-server/nfs-utils/g' setup-nfs-server.sh 2>/dev/null || true
+                    sed -i 's/nfs-common/nfs-utils/g' setup-nfs-server.sh 2>/dev/null || true
+                  fi
 
+                  # Add a lightweight apt-get shim so any remaining apt-get calls succeed
+                  if [ ! -x /usr/local/bin/apt-get ]; then
+                    echo '#!/bin/bash' > /usr/local/bin/apt-get || true
+                    echo "# Minimal apt-get shim: translate 'apt-get install' to 'dnf install -y'" >> /usr/local/bin/apt-get || true
+                    echo 'if [ "$1" = "install" ]; then' >> /usr/local/bin/apt-get || true
+                    echo '  shift' >> /usr/local/bin/apt-get || true
+                    echo '  exec dnf install -y "$@"' >> /usr/local/bin/apt-get || true
+                    echo 'fi' >> /usr/local/bin/apt-get || true
+                    echo 'echo "apt-get shim: only \"install\" supported" >&2' >> /usr/local/bin/apt-get || true
+                    echo 'exit 1' >> /usr/local/bin/apt-get || true
+                    chmod +x /usr/local/bin/apt-get || true
+                  fi
+                fi
+
+                echo "Configuration files downloaded successfully"
                 
                 if [[ "$IS_PRIMARY" == "true" ]]; then
+                  echo "Initializing Docker Swarm as primary node..."
                   docker swarm init --advertise-addr $LOCAL_IP
                   MANAGER_TOKEN=$(docker swarm join-token manager -q)
                   aws ssm put-parameter --name "/$DEPLOYMENT_NAME/swarm-manager-token" --value "$MANAGER_TOKEN" --type "SecureString" --region "$AWS_REGION" --overwrite || true
@@ -648,8 +712,21 @@ Resources:
                     sleep 10
                   done
                   sleep 30
+                  # Ensure NFS server is configured on primary for Amazon Linux
+                  if command -v dnf &> /dev/null; then
+                    echo "Setting up NFS server for Amazon Linux on primary node"
+                    mkdir -p /opt/shuffle/shuffle-database
+                    chown nfsnobody:nfsnobody /opt/shuffle/shuffle-database 2>/dev/null || true
+                    chmod 755 /opt/shuffle/shuffle-database
+                    if ! grep -q "/opt/shuffle/shuffle-database" /etc/exports 2>/dev/null; then
+                      echo "/opt/shuffle/shuffle-database *(rw,sync,no_subtree_check,no_root_squash)" >> /etc/exports
+                    fi
+                    systemctl enable --now nfs-server 2>/dev/null || true
+                    exportfs -ra 2>/dev/null || true
+                  fi
                   bash deploy.sh
                 else
+                  echo "Joining Docker Swarm as secondary node..."
                   # Secondary node - join swarm
                   for i in {1..60}; do
                     PRIMARY_IP=$(aws ssm get-parameter --name "/$DEPLOYMENT_NAME/primary-manager-ip" --region "$AWS_REGION" --query 'Parameter.Value' --output text 2>/dev/null || echo "")
@@ -676,7 +753,9 @@ Resources:
     Properties:
       AutoScalingGroupName: !Sub '${DeploymentName}-asg'
       VPCZoneIdentifier:
-        - !Ref ShuffleSubnet
+        - !Ref ShuffleSubnet1
+        - !Ref ShuffleSubnet2
+        - !Ref ShuffleSubnet3
       LaunchTemplate:
         LaunchTemplateId: !Ref ShuffleLaunchTemplate
         Version: !GetAtt ShuffleLaunchTemplate.LatestVersionNumber
@@ -708,11 +787,23 @@ Outputs:
     Export:
       Name: !Sub '${DeploymentName}-vpc-id'
 
-  SubnetId:
-    Description: Subnet ID
-    Value: !Ref ShuffleSubnet
+  SubnetId1:
+    Description: Subnet 1 ID (AZ1)
+    Value: !Ref ShuffleSubnet1
     Export:
-      Name: !Sub '${DeploymentName}-subnet-id'
+      Name: !Sub '${DeploymentName}-subnet-1-id'
+
+  SubnetId2:
+    Description: Subnet 2 ID (AZ2)
+    Value: !Ref ShuffleSubnet2
+    Export:
+      Name: !Sub '${DeploymentName}-subnet-2-id'
+
+  SubnetId3:
+    Description: Subnet 3 ID (AZ3)
+    Value: !Ref ShuffleSubnet3
+    Export:
+      Name: !Sub '${DeploymentName}-subnet-3-id'
 
   SecurityGroupInternal:
     Description: Internal Security Group ID
@@ -729,6 +820,12 @@ Outputs:
   AutoScalingGroupName:
     Description: Auto Scaling Group Name
     Value: !Ref ShuffleASG
+
+  PlacementGroupName:
+    Description: EC2 Placement Group Name (Spread strategy for high-availability)
+    Value: !Ref ShufflePlacementGroup
+    Export:
+      Name: !Sub '${DeploymentName}-placement-group'
 
   DeploymentName:
     Description: Deployment Name
