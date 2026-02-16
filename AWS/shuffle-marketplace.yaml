@@ -31,24 +31,50 @@ Metadata:
     ParameterLabels:
       DeploymentName:
         default: "Deployment Name"
+      Environment:
+        default: "Environment"
       NodeCount:
         default: "Number of Nodes"
       InstanceType:
         default: "EC2 Instance Type"
       VolumeSize:
         default: "EBS Volume Size (GB)"
+      VolumeType:
+        default: "EBS Volume Type"
+      VpcCIDR:
+        default: "VPC CIDR Block"
+      SubnetCIDR:
+        default: "Subnet CIDR Block"
+      ExternalAccessCIDRs:
+        default: "External Access CIDRs"
+      EnableSSH:
+        default: "Enable SSH Access"
+      SSHKeyName:
+        default: "SSH Key Pair Name"
+      SSHAccessCIDRs:
+        default: "SSH Access CIDRs"
 
 Parameters:
   DeploymentName:
     Type: String
-    Description: Name for this Shuffle deployment (used for resource naming)
+    Description: >-
+      Unique name for this Shuffle deployment, used to name all associated AWS resources
+      (VPC, subnets, security groups, ASG, etc.). Use lowercase letters, numbers, and
+      hyphens only (e.g., shuffle-prod, shuffle-dev-01).
     Default: shuffle-cluster
-    AllowedPattern: ^[a-z0-9-]+$
-    ConstraintDescription: Must contain only lowercase letters, numbers, and hyphens
+    MinLength: 3
+    MaxLength: 32
+    AllowedPattern: ^[a-z][a-z0-9-]*[a-z0-9]$
+    ConstraintDescription: >-
+      Must be 3-32 characters long, begin with a lowercase letter, end with a letter or
+      number, and contain only lowercase letters, numbers, and hyphens.
 
   Environment:
     Type: String
-    Description: Environment type for this deployment
+    Description: >-
+      Deployment environment type, used for resource tagging and operational context.
+      Choose 'production' for live workloads, 'staging' for pre-production testing,
+      or 'dev' for development and experimentation.
     Default: production
     AllowedValues:
       - dev
@@ -57,15 +83,21 @@ Parameters:
 
   NodeCount:
     Type: Number
-    Description: Total number of EC2 instances in the Shuffle cluster (1-10)
+    Description: >-
+      Total number of EC2 instances in the Docker Swarm cluster. Use 1 for single-node
+      evaluation, 3 for high-availability production, or up to 10 for large-scale
+      deployments. All nodes participate as Swarm managers.
     Default: 1
     MinValue: 1
     MaxValue: 10
-    ConstraintDescription: Must be between 1 and 10
+    ConstraintDescription: Must be a whole number between 1 and 10.
 
   InstanceType:
     Type: String
-    Description: EC2 instance type for Shuffle nodes (minimum 2 vCPUs, 8GB RAM recommended)
+    Description: >-
+      EC2 instance type for each Shuffle node. Minimum recommended: t3.large (2 vCPUs,
+      8 GB RAM). For production workloads with heavy automation, use t3.xlarge or larger.
+      m5/m6i families provide consistent baseline performance for sustained workloads.
     Default: t3.large
     AllowedValues:
       - t3.large      # 2 vCPUs, 8GB RAM
@@ -80,15 +112,21 @@ Parameters:
 
   VolumeSize:
     Type: Number
-    Description: Size of the EBS root volume in GB
+    Description: >-
+      Size of the EBS root volume in GB for each node. Stores Docker images, OpenSearch
+      data, and Shuffle application data. Minimum 120 GB required; increase for
+      environments with large workflow histories or many installed apps.
     Default: 120
     MinValue: 120
     MaxValue: 1000
-    ConstraintDescription: Must be between 120 and 1000 GB
+    ConstraintDescription: Must be a whole number between 120 and 1000 GB.
 
   VolumeType:
     Type: String
-    Description: EBS volume type
+    Description: >-
+      EBS volume type for root volumes. gp3 (recommended) provides a 3000 IOPS baseline
+      at lower cost than gp2. Use io1/io2 only for workloads requiring guaranteed
+      high IOPS beyond the gp3 baseline.
     Default: gp3
     AllowedValues:
       - gp3  # General Purpose SSD (recommended)
@@ -101,33 +139,37 @@ Parameters:
     Description: Amazon Linux 2023 AMI (dynamically resolved from SSM Parameter Store)
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
 
-  SSHKeyName:
-    Type: AWS::EC2::KeyPair::KeyName
-    Description: EC2 Key Pair name for SSH access to instances (if EnableSSH is true)
-    ConstraintDescription: Must be an existing EC2 Key Pair name
-
   VpcCIDR:
     Type: String
-    Description: CIDR block for the VPC
+    Description: >-
+      CIDR block for the new VPC. A /16 block provides maximum flexibility for subnets.
+      Ensure this range does not overlap with existing VPCs if you plan VPC peering.
     Default: 10.224.0.0/16
     AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
-    ConstraintDescription: Must be a valid CIDR block (e.g., 10.224.0.0/16)
+    ConstraintDescription: Must be a valid IPv4 CIDR block (e.g., 10.224.0.0/16).
 
   SubnetCIDR:
     Type: String
-    Description: CIDR block for the subnet (must be within VPC CIDR)
+    Description: >-
+      CIDR block for the primary subnet. Must fall within the VPC CIDR range. A /24 block
+      provides 254 usable IP addresses, sufficient for most Shuffle deployments.
     Default: 10.224.1.0/24
     AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
-    ConstraintDescription: Must be a valid CIDR block
+    ConstraintDescription: Must be a valid IPv4 CIDR block within the VPC range (e.g., 10.224.1.0/24).
 
   ExternalAccessCIDRs:
     Type: CommaDelimitedList
-    Description: Comma-separated list of CIDR blocks allowed to access Shuffle UI (port 3001)
-    Default: 0.0.0.0/0
+    Description: >-
+      Comma-separated CIDR blocks allowed to access the Shuffle UI on port 3001.
+      Do NOT use 0.0.0.0/0 in production. Restrict to your organization's IP
+      ranges (e.g., 203.0.113.0/24,198.51.100.0/24).
 
   EnableSSH:
     Type: String
-    Description: Enable SSH access to instances
+    Description: >-
+      Enable SSH access (port 22) to cluster instances for troubleshooting. Set to
+      'false' to harden network security. Requires a valid SSHKeyName when enabled.
+      AWS Systems Manager Session Manager is available regardless of this setting.
     Default: 'true'
     AllowedValues:
       - 'true'
@@ -135,19 +177,21 @@ Parameters:
 
   SSHAccessCIDRs:
     Type: CommaDelimitedList
-    Description: Comma-separated list of CIDR blocks allowed SSH access (if enabled)
-    Default: 0.0.0.0/0
+    Description: >-
+      Comma-separated CIDR blocks allowed SSH access when EnableSSH is 'true'.
+      Do NOT use 0.0.0.0/0 in production. Restrict to trusted admin IP ranges
+      (e.g., 10.0.0.0/8 for internal networks or specific public IPs).
 
   SSHKeyName:
-    Type: String
-    Description: EC2 Key Pair name for SSH access (must exist in your AWS account). Required if EnableSSH is true.
-    Default: ''
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: >-
+      Name of an existing EC2 Key Pair for SSH access. Required when EnableSSH is 'true'.
+      The key pair must already exist in the same AWS region as this deployment.
+    ConstraintDescription: Must be the name of an existing EC2 Key Pair in your account.
 
 
 Conditions:
-  EnableSSHAccess: !And
-    - !Equals [!Ref EnableSSH, 'true']
-    - !Not [!Equals [!Ref SSHKeyName, '']]
+  EnableSSHAccess: !Equals [!Ref EnableSSH, 'true']
   MultiNode: !Not [!Equals [!Ref NodeCount, 1]]
 
 Resources:
