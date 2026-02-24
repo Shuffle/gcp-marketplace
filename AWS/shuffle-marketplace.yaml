@@ -134,11 +134,6 @@ Parameters:
       - io1  # Provisioned IOPS SSD
       - io2  # Provisioned IOPS SSD
 
-  AmazonLinux2023AMI:
-    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Description: Amazon Linux 2023 AMI (dynamically resolved from SSM Parameter Store)
-    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
-
   VpcCIDR:
     Type: String
     Description: >-
@@ -183,16 +178,94 @@ Parameters:
       (e.g., 10.0.0.0/8 for internal networks or specific public IPs).
 
   SSHKeyName:
-    Type: AWS::EC2::KeyPair::KeyName
+    Type: String
     Description: >-
       Name of an existing EC2 Key Pair for SSH access. Required when EnableSSH is 'true'.
       The key pair must already exist in the same AWS region as this deployment.
-    ConstraintDescription: Must be the name of an existing EC2 Key Pair in your account.
+      Leave as default value when SSH is disabled.
+    Default: "no-ssh-key-needed"
+    ConstraintDescription: Must be the name of an existing EC2 Key Pair in your account when SSH is enabled.
+
+
+Mappings:
+  RegionMap:
+    us-east-1:
+      AMI: ami-0b0c343f518841208
+    us-east-2:
+      AMI: ami-07a3257d158a1c3dd
+    us-west-1:
+      AMI: ami-0c5a6acefe0bd5954
+    us-west-2:
+      AMI: ami-0341d2a3c72b2dbb6
+    af-south-1:
+      AMI: ami-06c2324ce4556ff7f
+    ap-south-1:
+      AMI: ami-0ff331e8366e119d2
+    ap-south-2:
+      AMI: ami-0f0e99174b6643111
+    ap-southeast-1:
+      AMI: ami-0e27e976ae0622a03
+    ap-southeast-2:
+      AMI: ami-086bac2ecc9a055b6
+    ap-southeast-3:
+      AMI: ami-0eefc5d756ce45aa0
+    ap-southeast-4:
+      AMI: ami-088d3be2e136b7863
+    ap-southeast-5:
+      AMI: ami-014d7ac3d7d643610
+    ap-southeast-6:
+      AMI: ami-06c5b0e81d3e70574
+    ap-southeast-7:
+      AMI: ami-0816f13f244a622ef
+    ap-northeast-1:
+      AMI: ami-04f6b67411f455747
+    ap-northeast-2:
+      AMI: ami-091773acad5212d6f
+    ap-northeast-3:
+      AMI: ami-0b74d418163cbae74
+    ca-central-1:
+      AMI: ami-04b370b058f63a259
+    ca-west-1:
+      AMI: ami-061bcbe7d6659da17
+    sa-east-1:
+      AMI: ami-095f4f12e978c96ed
+    ap-east-1:
+      AMI: ami-0d7b1fa07b81f1bd8
+    ap-east-2:
+      AMI: ami-00a4e5f286b00ec01
+    eu-west-1:
+      AMI: ami-0dd5aaaf6a60272e1
+    eu-west-2:
+      AMI: ami-0ffd3d5c5814f9a4d
+    eu-west-3:
+      AMI: ami-0acb3ac1f116df3f2
+    eu-north-1:
+      AMI: ami-032dd4ef4abc204bc
+    eu-central-1:
+      AMI: ami-05a9e1202268b314a
+    eu-central-2:
+      AMI: ami-0da2bf6b63f1a89f2
+    eu-south-1:
+      AMI: ami-05bdc781df55674ee
+    eu-south-2:
+      AMI: ami-07cd122fcc9525499
+    mx-central-1:
+      AMI: ami-044ad253060c3e0a1
+    me-south-1:
+      AMI: ami-05cb6b6462cc1ca77
+    me-central-1:
+      AMI: ami-002f2054a19581f49
+    il-central-1:
+      AMI: ami-0665f3f60f4a49915
+    
 
 
 Conditions:
   EnableSSHAccess: !Equals [!Ref EnableSSH, 'true']
   MultiNode: !Not [!Equals [!Ref NodeCount, 1]]
+  ValidSSHKeyName: !Not [!Equals [!Ref SSHKeyName, 'no-ssh-key-needed']]
+  HasThreeOrMoreAZs: !Not [!Or [!Equals [!Ref 'AWS::Region', 'us-west-1'], !Equals [!Ref 'AWS::Region', 'ap-northeast-3'], !Equals [!Ref 'AWS::Region', 'ca-central-1']]]
+  LargeCluster: !Not [!Or [!Equals [!Ref NodeCount, 1], !Equals [!Ref NodeCount, 2], !Equals [!Ref NodeCount, 3]]]
 
 Resources:
   # ==================== VPC and Networking ====================
@@ -256,6 +329,7 @@ Resources:
 
   ShuffleSubnet3:
     Type: AWS::EC2::Subnet
+    Condition: HasThreeOrMoreAZs
     Properties:
       VpcId: !Ref ShuffleVPC
       CidrBlock: !Select [2, !Cidr [!Ref VpcCIDR, 4, 8]]
@@ -299,6 +373,7 @@ Resources:
 
   SubnetRouteTableAssociation3:
     Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: HasThreeOrMoreAZs
     Properties:
       SubnetId: !Ref ShuffleSubnet3
       RouteTableId: !Ref ShuffleRouteTable
@@ -468,7 +543,7 @@ Resources:
         - Key: Name
           Value: !Sub '${DeploymentName}-external-sg'
 
-  # External access to Shuffle UI (port 3001)
+  # External access to Shuffle UI (port 3001) - support multiple CIDRs
   ExternalHTTPIngress:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
@@ -487,15 +562,20 @@ Resources:
       GroupName: !Sub '${DeploymentName}-ssh-sg'
       GroupDescription: SSH access to Shuffle nodes
       VpcId: !Ref ShuffleVPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: !Select [0, !Ref SSHAccessCIDRs]
-          Description: SSH access
       Tags:
         - Key: Name
           Value: !Sub '${DeploymentName}-ssh-sg'
+
+  SSHIngress1:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: EnableSSHAccess
+    Properties:
+      GroupId: !Ref ShuffleSSHSG
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Select [0, !Ref SSHAccessCIDRs]
+      Description: SSH access
 
   # ==================== EC2 Placement Group ====================
 
@@ -503,7 +583,7 @@ Resources:
     Type: AWS::EC2::PlacementGroup
     Properties:
       GroupName: !Sub '${DeploymentName}-placement-group'
-      Strategy: spread
+      Strategy: !If [LargeCluster, 'partition', 'spread']
       Tags:
         - Key: Name
           Value: !Sub '${DeploymentName}-placement-group'
@@ -515,7 +595,6 @@ Resources:
   ShuffleInstanceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${DeploymentName}-instance-role'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -573,7 +652,6 @@ Resources:
   ShuffleInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
-      InstanceProfileName: !Sub '${DeploymentName}-instance-profile'
       Roles:
         - !Ref ShuffleInstanceRole
 
@@ -582,14 +660,20 @@ Resources:
     Properties:
       LaunchTemplateName: !Sub '${DeploymentName}-launch-template'
       LaunchTemplateData:
-        # Use dynamic SSM parameter for Amazon Linux 2023 AMI (region-specific)
-        ImageId: !Ref AmazonLinux2023AMI
+        # Use regional AMI mapping for Amazon Linux 2023
+        ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
         InstanceType: !Ref InstanceType
-        KeyName: !If [EnableSSHAccess, !Ref SSHKeyName, !Ref 'AWS::NoValue']
+        KeyName: !If 
+          - EnableSSHAccess
+          - !If
+            - ValidSSHKeyName
+            - !Ref SSHKeyName
+            - !Ref 'AWS::NoValue'
+          - !Ref 'AWS::NoValue'
         IamInstanceProfile:
           Arn: !GetAtt ShuffleInstanceProfile.Arn
         BlockDeviceMappings:
-          - DeviceName: /dev/sda1
+          - DeviceName: /dev/xvda
             Ebs:
               VolumeSize: !Ref VolumeSize
               VolumeType: !Ref VolumeType
@@ -597,6 +681,7 @@ Resources:
               Encrypted: true
         Placement:
           GroupName: !Ref ShufflePlacementGroup
+          PartitionNumber: !If [LargeCluster, 1, !Ref 'AWS::NoValue']
         NetworkInterfaces:
           - DeviceIndex: 0
             AssociatePublicIpAddress: true
@@ -624,171 +709,34 @@ Resources:
               - |
                 #!/bin/bash
                 set -euo pipefail
-                exec > >(tee /var/log/shuffle-startup.log) 2>&1
-                
-                echo "Starting Shuffle node initialization on Amazon Linux 2023..."
-                
-                # Configuration from CloudFormation
+                exec > >(tee /var/log/userdata.log) 2>&1
+                echo "==== UserData bootstrap started $(date) ===="
+
+                # ---- CloudFormation-injected parameters ----
                 export DEPLOYMENT_NAME="${DeploymentName}"
                 export TOTAL_NODES="${TotalNodes}"
                 export AWS_REGION="${AwsRegion}"
-                
-                # Get EC2 instance metadata
-                get_instance_metadata() {
-                  local path="$1"
-                  TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || echo "")
-                  if [[ -n "$TOKEN" ]]; then
-                    curl -H "X-aws-ec2-metadata-token: $TOKEN" "http://169.254.169.254/latest/meta-data/$path" 2>/dev/null || echo ""
-                  else
-                    curl "http://169.254.169.254/latest/meta-data/$path" 2>/dev/null || echo ""
-                  fi
-                }
-                
-                INSTANCE_ID=$(get_instance_metadata "instance-id")
-                LOCAL_IP=$(get_instance_metadata "local-ipv4")
-                
-                echo "Instance ID: $INSTANCE_ID, IP: $LOCAL_IP"
-                
-                # Update system packages (Amazon Linux 2023 uses dnf)
-                echo "Updating system packages..."
-                dnf update -y
-                
-                # Install dependencies for Amazon Linux 2023
-                echo "Installing dependencies..."
-                # Use --allowerasing to handle package conflicts
-                dnf install -y --allowerasing ca-certificates curl nfs-utils jq nmap-ncat aws-cli
-                
-                # Install Docker CE on Amazon Linux 2023
-                echo "Installing Docker..."
-                if ! command -v docker &> /dev/null; then
-                  dnf install -y docker
-                  systemctl enable docker
-                  systemctl start docker
-                  echo "Docker installed successfully"
-                fi
-                
-                # Install Docker Compose (optional, as Docker Swarm is used for orchestration)
-                # Try to install docker-compose package; skip if unavailable
-                if ! docker compose version &> /dev/null; then
-                  dnf install -y docker-compose 2>/dev/null || echo "docker-compose not available in repos; proceeding with Docker Swarm"
-                fi
-                
-                # Add ec2-user to docker group for Docker socket access
-                usermod -aG docker ec2-user
-                
-                # Setup directories
-                mkdir -p /opt/shuffle/shuffle-database
-                chown 1000:1000 /opt/shuffle/shuffle-database
-                chmod 755 /opt/shuffle/shuffle-database
-                
-                # Determine if primary node
-                ASG_NAME="${DeploymentName}-asg"
-                IS_PRIMARY="false"
-                for i in {1..30}; do
-                  INSTANCES=$(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$ASG_NAME" --region "$AWS_REGION" --query 'AutoScalingGroups[0].Instances[?HealthStatus==`Healthy`].InstanceId' --output text 2>/dev/null | tr '\t' '\n' | sort || echo "")
-                  if [[ -n "$INSTANCES" ]]; then
-                    FIRST_INSTANCE=$(echo "$INSTANCES" | head -n1)
-                    [[ "$INSTANCE_ID" == "$FIRST_INSTANCE" ]] && IS_PRIMARY="true"
-                    break
-                  fi
-                  sleep 10
-                done
-                [[ "$TOTAL_NODES" == "1" ]] && IS_PRIMARY="true"
-                
-                mkdir -p /opt/shuffle
-                cd /opt/shuffle
-                
-                # Download config files from S3 bucket
-                echo "Downloading configuration files from S3..."
-                
-                aws s3 cp s3://shuffler/config/swarm.yaml swarm.yaml --region "$AWS_REGION"
-                aws s3 cp s3://shuffler/config/deploy.sh deploy.sh --region "$AWS_REGION"
-                aws s3 cp s3://shuffler/config/setup-nfs-server.sh setup-nfs-server.sh --region "$AWS_REGION"
-                aws s3 cp s3://shuffler/config/nginx-main.conf nginx-main.conf --region "$AWS_REGION"
-                aws s3 cp s3://shuffler/config/.env .env --region "$AWS_REGION"
-                aws s3 cp s3://shuffler/config/monitor-db-permissions.sh monitor-db-permissions.sh --region "$AWS_REGION"
-                
-                # Convert Windows line endings (CRLF) to Unix line endings (LF)
-                echo "Converting line endings to Unix format..."
-                for file in deploy.sh setup-nfs-server.sh monitor-db-permissions.sh; do
-                  sed -i 's/\r$//' "$file" 2>/dev/null || true
-                done
-                
-                chmod +x deploy.sh setup-nfs-server.sh monitor-db-permissions.sh
-                
-                # Make downloaded scripts compatible with the instance package manager
-                if command -v dnf &> /dev/null; then
-                  echo "Detected DNF-based distro; adjusting downloaded scripts for dnf"
-                  if [ -f setup-nfs-server.sh ]; then
-                    sed -i 's/apt-get/dnf/g' setup-nfs-server.sh 2>/dev/null || true
-                    sed -i 's/apt /dnf /g' setup-nfs-server.sh 2>/dev/null || true
-                    sed -i 's/nfs-kernel-server/nfs-utils/g' setup-nfs-server.sh 2>/dev/null || true
-                    sed -i 's/nfs-common/nfs-utils/g' setup-nfs-server.sh 2>/dev/null || true
-                  fi
 
-                  # Add a lightweight apt-get shim so any remaining apt-get calls succeed
-                  if [ ! -x /usr/local/bin/apt-get ]; then
-                    echo '#!/bin/bash' > /usr/local/bin/apt-get || true
-                    echo "# Minimal apt-get shim: translate 'apt-get install' to 'dnf install -y'" >> /usr/local/bin/apt-get || true
-                    echo 'if [ "$1" = "install" ]; then' >> /usr/local/bin/apt-get || true
-                    echo '  shift' >> /usr/local/bin/apt-get || true
-                    echo '  exec dnf install -y "$@"' >> /usr/local/bin/apt-get || true
-                    echo 'fi' >> /usr/local/bin/apt-get || true
-                    echo 'echo "apt-get shim: only \"install\" supported" >&2' >> /usr/local/bin/apt-get || true
-                    echo 'exit 1' >> /usr/local/bin/apt-get || true
-                    chmod +x /usr/local/bin/apt-get || true
-                  fi
-                fi
+                # ---- Download and run the main setup script ----
+                SETUP_SCRIPT="/opt/shuffle-bootstrap/startup-setup.sh"
+                mkdir -p /opt/shuffle-bootstrap
 
-                echo "Configuration files downloaded successfully"
-                
-                if [[ "$IS_PRIMARY" == "true" ]]; then
-                  echo "Initializing Docker Swarm as primary node..."
-                  docker swarm init --advertise-addr $LOCAL_IP
-                  MANAGER_TOKEN=$(docker swarm join-token manager -q)
-                  aws ssm put-parameter --name "/$DEPLOYMENT_NAME/swarm-manager-token" --value "$MANAGER_TOKEN" --type "SecureString" --region "$AWS_REGION" --overwrite || true
-                  aws ssm put-parameter --name "/$DEPLOYMENT_NAME/primary-manager-ip" --value "$LOCAL_IP" --type "String" --region "$AWS_REGION" --overwrite || true
-                  
-                  # Wait for all nodes to join
-                  for i in {1..300}; do
-                    CURRENT_COUNT=$(docker node ls --format "{{.ID}}" | wc -l)
-                    [[ "$CURRENT_COUNT" -eq "$TOTAL_NODES" ]] && break
-                    sleep 10
-                  done
-                  sleep 30
-                  # Ensure NFS server is configured on primary for Amazon Linux
-                  if command -v dnf &> /dev/null; then
-                    echo "Setting up NFS server for Amazon Linux on primary node"
-                    mkdir -p /opt/shuffle/shuffle-database
-                    chown nfsnobody:nfsnobody /opt/shuffle/shuffle-database 2>/dev/null || true
-                    chmod 755 /opt/shuffle/shuffle-database
-                    if ! grep -q "/opt/shuffle/shuffle-database" /etc/exports 2>/dev/null; then
-                      echo "/opt/shuffle/shuffle-database *(rw,sync,no_subtree_check,no_root_squash)" >> /etc/exports
-                    fi
-                    systemctl enable --now nfs-server 2>/dev/null || true
-                    exportfs -ra 2>/dev/null || true
-                  fi
-                  bash deploy.sh
-                else
-                  echo "Joining Docker Swarm as secondary node..."
-                  # Secondary node - join swarm
-                  for i in {1..60}; do
-                    PRIMARY_IP=$(aws ssm get-parameter --name "/$DEPLOYMENT_NAME/primary-manager-ip" --region "$AWS_REGION" --query 'Parameter.Value' --output text 2>/dev/null || echo "")
-                    if [[ -n "$PRIMARY_IP" ]] && nc -z -w5 $PRIMARY_IP 2377 2>/dev/null; then
-                      MANAGER_TOKEN=$(aws ssm get-parameter --name "/$DEPLOYMENT_NAME/swarm-manager-token" --region "$AWS_REGION" --query 'Parameter.Value' --output text --with-decryption 2>/dev/null || echo "")
-                      if [[ -n "$MANAGER_TOKEN" ]]; then
-                        docker swarm join --token "$MANAGER_TOKEN" "$PRIMARY_IP:2377" && break
-                      fi
-                    fi
-                    sleep 10
-                  done
-                fi
-                
-                nohup /opt/shuffle/monitor-db-permissions.sh > /var/log/shuffle-db-monitor.log 2>&1 &
-                echo "Shuffle initialization complete!"
+                echo "Downloading startup-setup.sh from S3..."
+                aws s3 cp s3://shuffler/config/startup-setup.sh "$SETUP_SCRIPT" \
+                  --region "$AWS_REGION"
+
+                # Ensure Unix line endings and executable bit
+                sed -i 's/\r$//' "$SETUP_SCRIPT"
+                chmod +x "$SETUP_SCRIPT"
+
+                echo "Executing startup-setup.sh..."
+                bash "$SETUP_SCRIPT"
+
+                echo "==== UserData bootstrap complete $(date) ===="
               - TotalNodes: !Ref NodeCount
                 AwsRegion: !Ref AWS::Region
                 DeploymentName: !Ref DeploymentName
+
 
   # ==================== Auto Scaling Group ====================
 
@@ -796,10 +744,13 @@ Resources:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
       AutoScalingGroupName: !Sub '${DeploymentName}-asg'
-      VPCZoneIdentifier:
-        - !Ref ShuffleSubnet1
-        - !Ref ShuffleSubnet2
-        - !Ref ShuffleSubnet3
+      VPCZoneIdentifier: !If
+        - HasThreeOrMoreAZs
+        - - !Ref ShuffleSubnet1
+          - !Ref ShuffleSubnet2
+          - !Ref ShuffleSubnet3
+        - - !Ref ShuffleSubnet1
+          - !Ref ShuffleSubnet2
       LaunchTemplate:
         LaunchTemplateId: !Ref ShuffleLaunchTemplate
         Version: !GetAtt ShuffleLaunchTemplate.LatestVersionNumber
@@ -807,7 +758,7 @@ Resources:
       MaxSize: !Ref NodeCount
       DesiredCapacity: !Ref NodeCount
       HealthCheckType: EC2
-      HealthCheckGracePeriod: 600
+      HealthCheckGracePeriod: !If [LargeCluster, 1200, 600]  # 20 min for large clusters, 10 min for small
       Tags:
         - Key: Name
           Value: !Sub '${DeploymentName}-node'
@@ -844,6 +795,7 @@ Outputs:
       Name: !Sub '${DeploymentName}-subnet-2-id'
 
   SubnetId3:
+    Condition: HasThreeOrMoreAZs
     Description: Subnet 3 ID (AZ3)
     Value: !Ref ShuffleSubnet3
     Export:
