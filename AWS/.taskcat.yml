@@ -1,0 +1,99 @@
+project:
+  name: shuffle-soar-cfn-test
+  regions:
+    - us-east-1
+    - us-east-2
+    - us-west-1
+    - us-west-2
+    - eu-west-1
+    - eu-west-2
+    - eu-west-3
+    - eu-north-1
+    - eu-central-1
+    - ap-south-1
+    - ap-southeast-1
+    - ap-southeast-2
+    - ap-northeast-1
+    - ap-northeast-2
+    - ca-central-1
+    - sa-east-1
+    - af-south-1
+    - ap-south-2
+    - ap-southeast-3
+    - ap-southeast-4
+    - ap-southeast-5
+    - ap-southeast-6
+    - ap-southeast-7
+    - ap-northeast-3
+    - ca-west-1
+    - ap-east-1
+    - ap-east-2
+    - eu-central-2
+    - eu-south-1
+    - eu-south-2
+    - mx-central-1
+    - me-south-1
+    - me-central-1
+    - il-central-1
+
+  s3_bucket: shuffle-taskcat-debug
+
+tests:
+
+  # ----------------------------------------------------
+  # Basic single-node minimal deployment test
+  # ----------------------------------------------------
+  single-node-basic:
+    template: ./shuffle-marketplace.yaml
+    parameters:
+      DeploymentName: shuffle-vm
+      Environment: dev
+      NodeCount: 1
+      InstanceType: t3.large
+      VolumeSize: 120
+      VolumeType: gp3
+      ExternalAccessCIDRs: 0.0.0.0/0
+      EnableSSH: "false"
+      SSHAccessCIDRs: 10.0.0.0/8
+      SSHKeyName: shuffle  # Uses default when SSH disabled
+
+  # ----------------------------------------------------
+  # Multi-node HA cluster test
+  # Validates swarm formation + placement group + ASG
+  # ----------------------------------------------------
+  # multi-node-ha:
+  #   template: ./shuffle-marketplace.yaml
+  #   parameters:
+  #     DeploymentName: shuffle-test-ha
+  #     Environment: staging
+  #     NodeCount: 3
+  #     InstanceType: m5.large
+  #     VolumeSize: 200
+  #     VolumeType: gp3
+  #     ExternalAccessCIDRs: 0.0.0.0/0
+  #     EnableSSH: "false"
+  #     SSHAccessCIDRs: 0.0.0.0/0
+      # SSHKeyName: shuffle-aws-keypair
+
+  # ----------------------------------------------------
+  # Maximum scaling boundary test
+  # Tests ASG limits and placement logic
+  # ----------------------------------------------------
+  # scale-boundary:
+  #   template: ./shuffle-marketplace.yaml
+  #   parameters:
+  #     DeploymentName: shuffle-test-scale
+  #     Environment: dev
+  #     NodeCount: 10
+  #     InstanceType: m6i.large
+  #     VolumeSize: 500
+  #     VolumeType: gp3
+  #     ExternalAccessCIDRs: 0.0.0.0/0
+  #     EnableSSH: "false"
+  #     SSHAccessCIDRs: 10.0.0.0/8
+  #     SSHKeyName: dummy-key
+
+  # ----------------------------------------------------
+  # Storage/IAM focused test
+  # Tests log group, encrypted volumes, S3/SSM IAM
+  # ----------------------------------------------------
