@@ -25,7 +25,6 @@ Metadata:
           - VpcCIDR
           - SubnetCIDR
           - ExternalAccessCIDRs
-          - EnableSSH
           - SSHKeyName
           - SSHAccessCIDRs
     ParameterLabels:
@@ -47,8 +46,6 @@ Metadata:
         default: "Subnet CIDR Block"
       ExternalAccessCIDRs:
         default: "External Access CIDRs"
-      EnableSSH:
-        default: "Enable SSH Access"
       SSHKeyName:
         default: "SSH Key Pair Name"
       SSHAccessCIDRs:
@@ -92,6 +89,13 @@ Parameters:
     MaxValue: 10
     ConstraintDescription: Must be a whole number between 1 and 10.
 
+  AmiId:
+    Type: String
+    Description: >-
+      The ID of the AMI provided by AWS Marketplace. This parameter is automatically
+      populated by AWS Marketplace during product launch.
+    Default: ""
+
   InstanceType:
     Type: String
     Description: >-
@@ -100,15 +104,19 @@ Parameters:
       m5/m6i families provide consistent baseline performance for sustained workloads.
     Default: t3.large
     AllowedValues:
-      - t3.large      # 2 vCPUs, 8GB RAM
-      - t3.xlarge     # 4 vCPUs, 16GB RAM
-      - t3.2xlarge    # 8 vCPUs, 32GB RAM
-      - m5.large      # 2 vCPUs, 8GB RAM
-      - m5.xlarge     # 4 vCPUs, 16GB RAM
-      - m5.2xlarge    # 8 vCPUs, 32GB RAM
-      - m6i.large     # 2 vCPUs, 8GB RAM
-      - m6i.xlarge    # 4 vCPUs, 16GB RAM
-      - m6i.2xlarge   # 8 vCPUs, 32GB RAM
+      - m6a.2xlarge
+      - t3.large
+      - m5.2xlarge
+      - m5.xlarge
+      - m6a.xlarge
+      - r5.xlarge
+      - t3a.large
+      - m6a.large
+      - m5a.large
+      - m5.large
+      - r5.large
+      - m5a.xlarge
+      - m5.4xlarge
 
   VolumeSize:
     Type: Number
@@ -154,116 +162,30 @@ Parameters:
 
   ExternalAccessCIDRs:
     Type: CommaDelimitedList
+    Default: "0.0.0.0/0"
     Description: >-
       Comma-separated CIDR blocks allowed to access the Shuffle UI on port 3001.
       Do NOT use 0.0.0.0/0 in production. Restrict to your organization's IP
       ranges (e.g., 203.0.113.0/24,198.51.100.0/24).
 
-  EnableSSH:
-    Type: String
-    Description: >-
-      Enable SSH access (port 22) to cluster instances for troubleshooting. Set to
-      'false' to harden network security. Requires a valid SSHKeyName when enabled.
-      AWS Systems Manager Session Manager is available regardless of this setting.
-    Default: 'true'
-    AllowedValues:
-      - 'true'
-      - 'false'
-
   SSHAccessCIDRs:
     Type: CommaDelimitedList
+    Default: "0.0.0.0/0"
     Description: >-
-      Comma-separated CIDR blocks allowed SSH access when EnableSSH is 'true'.
+      Comma-separated CIDR blocks allowed SSH access on port 22.
       Do NOT use 0.0.0.0/0 in production. Restrict to trusted admin IP ranges
       (e.g., 10.0.0.0/8 for internal networks or specific public IPs).
 
   SSHKeyName:
-    Type: String
+    Type: AWS::EC2::KeyPair::KeyName
     Description: >-
-      Name of an existing EC2 Key Pair for SSH access. Required when EnableSSH is 'true'.
-      The key pair must already exist in the same AWS region as this deployment.
-      Leave as default value when SSH is disabled.
-    Default: "no-ssh-key-needed"
-    ConstraintDescription: Must be the name of an existing EC2 Key Pair in your account when SSH is enabled.
-
-
-Mappings:
-  RegionMap:
-    us-east-1:
-      AMI: ami-0b0c343f518841208
-    us-east-2:
-      AMI: ami-07a3257d158a1c3dd
-    us-west-1:
-      AMI: ami-0c5a6acefe0bd5954
-    us-west-2:
-      AMI: ami-0341d2a3c72b2dbb6
-    af-south-1:
-      AMI: ami-06c2324ce4556ff7f
-    ap-south-1:
-      AMI: ami-0ff331e8366e119d2
-    ap-south-2:
-      AMI: ami-0f0e99174b6643111
-    ap-southeast-1:
-      AMI: ami-0e27e976ae0622a03
-    ap-southeast-2:
-      AMI: ami-086bac2ecc9a055b6
-    ap-southeast-3:
-      AMI: ami-0eefc5d756ce45aa0
-    ap-southeast-4:
-      AMI: ami-088d3be2e136b7863
-    ap-southeast-5:
-      AMI: ami-014d7ac3d7d643610
-    ap-southeast-6:
-      AMI: ami-06c5b0e81d3e70574
-    ap-southeast-7:
-      AMI: ami-0816f13f244a622ef
-    ap-northeast-1:
-      AMI: ami-04f6b67411f455747
-    ap-northeast-2:
-      AMI: ami-091773acad5212d6f
-    ap-northeast-3:
-      AMI: ami-0b74d418163cbae74
-    ca-central-1:
-      AMI: ami-04b370b058f63a259
-    ca-west-1:
-      AMI: ami-061bcbe7d6659da17
-    sa-east-1:
-      AMI: ami-095f4f12e978c96ed
-    ap-east-1:
-      AMI: ami-0d7b1fa07b81f1bd8
-    ap-east-2:
-      AMI: ami-00a4e5f286b00ec01
-    eu-west-1:
-      AMI: ami-0dd5aaaf6a60272e1
-    eu-west-2:
-      AMI: ami-0ffd3d5c5814f9a4d
-    eu-west-3:
-      AMI: ami-0acb3ac1f116df3f2
-    eu-north-1:
-      AMI: ami-032dd4ef4abc204bc
-    eu-central-1:
-      AMI: ami-05a9e1202268b314a
-    eu-central-2:
-      AMI: ami-0da2bf6b63f1a89f2
-    eu-south-1:
-      AMI: ami-05bdc781df55674ee
-    eu-south-2:
-      AMI: ami-07cd122fcc9525499
-    mx-central-1:
-      AMI: ami-044ad253060c3e0a1
-    me-south-1:
-      AMI: ami-05cb6b6462cc1ca77
-    me-central-1:
-      AMI: ami-002f2054a19581f49
-    il-central-1:
-      AMI: ami-0665f3f60f4a49915
-    
+      Name of an existing EC2 Key Pair for SSH access. The key pair must exist in the
+      same AWS region as this deployment.
+    ConstraintDescription: Must be the name of an existing EC2 Key Pair in your account.
 
 
 Conditions:
-  EnableSSHAccess: !Equals [!Ref EnableSSH, 'true']
   MultiNode: !Not [!Equals [!Ref NodeCount, 1]]
-  ValidSSHKeyName: !Not [!Equals [!Ref SSHKeyName, 'no-ssh-key-needed']]
   HasThreeOrMoreAZs: !Not [!Or [!Equals [!Ref 'AWS::Region', 'us-west-1'], !Equals [!Ref 'AWS::Region', 'ap-northeast-3'], !Equals [!Ref 'AWS::Region', 'ca-central-1']]]
   LargeCluster: !Not [!Or [!Equals [!Ref NodeCount, 1], !Equals [!Ref NodeCount, 2], !Equals [!Ref NodeCount, 3]]]
 
@@ -554,10 +476,9 @@ Resources:
       CidrIp: !Select [0, !Ref ExternalAccessCIDRs]
       Description: Shuffle UI access
 
-  # SSH Security Group (conditional)
+  # SSH Security Group
   ShuffleSSHSG:
     Type: AWS::EC2::SecurityGroup
-    Condition: EnableSSHAccess
     Properties:
       GroupName: !Sub '${DeploymentName}-ssh-sg'
       GroupDescription: SSH access to Shuffle nodes
@@ -568,7 +489,6 @@ Resources:
 
   SSHIngress1:
     Type: AWS::EC2::SecurityGroupIngress
-    Condition: EnableSSHAccess
     Properties:
       GroupId: !Ref ShuffleSSHSG
       IpProtocol: tcp
@@ -660,16 +580,9 @@ Resources:
     Properties:
       LaunchTemplateName: !Sub '${DeploymentName}-launch-template'
       LaunchTemplateData:
-        # Use regional AMI mapping for Amazon Linux 2023
-        ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
+        ImageId: !Ref AmiId
         InstanceType: !Ref InstanceType
-        KeyName: !If 
-          - EnableSSHAccess
-          - !If
-            - ValidSSHKeyName
-            - !Ref SSHKeyName
-            - !Ref 'AWS::NoValue'
-          - !Ref 'AWS::NoValue'
+        KeyName: !Ref SSHKeyName
         IamInstanceProfile:
           Arn: !GetAtt ShuffleInstanceProfile.Arn
         BlockDeviceMappings:
@@ -685,13 +598,10 @@ Resources:
         NetworkInterfaces:
           - DeviceIndex: 0
             AssociatePublicIpAddress: true
-            Groups: !If
-              - EnableSSHAccess
-              - - !Ref ShuffleInternalSG
-                - !Ref ShuffleExternalSG
-                - !Ref ShuffleSSHSG
-              - - !Ref ShuffleInternalSG
-                - !Ref ShuffleExternalSG
+            Groups:
+              - !Ref ShuffleInternalSG
+              - !Ref ShuffleExternalSG
+              - !Ref ShuffleSSHSG
         TagSpecifications:
           - ResourceType: instance
             Tags:
